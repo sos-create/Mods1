@@ -234,22 +234,26 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
      * Mirrors the mod's default property allow/deny rules. waterlogged is
      * forbidden globally; bamboo and slabs have narrower explicit allowlists.
      */
-    static boolean isDefaultPropertyAllowed(Material material, String property, String value) {
-        if (!isDefaultBlockAllowed(material) || property == null || value == null) return false;
-        if (property.equals("waterlogged")) return false;
-
+    static boolean isDefaultPropertyAllowed(Material material, String property) {
+        if (!isDefaultBlockAllowed(material) || property == null
+                || property.equals("waterlogged")) return false;
         if (material == Material.BAMBOO) {
-            return switch (property) {
-                case "age" -> true;
-                case "leaves" -> BAMBOO_LEAVES.contains(value);
-                default -> false;
-            };
+            return property.equals("age") || property.equals("leaves");
         }
-
         if (material.name().endsWith("_SLAB")) {
-            return property.equals("type") && SLAB_TYPES.contains(value);
+            return property.equals("type");
         }
+        return true;
+    }
 
+    static boolean isDefaultPropertyAllowed(Material material, String property, String value) {
+        if (value == null || !isDefaultPropertyAllowed(material, property)) return false;
+        if (material == Material.BAMBOO && property.equals("leaves")) {
+            return BAMBOO_LEAVES.contains(value);
+        }
+        if (material.name().endsWith("_SLAB") && property.equals("type")) {
+            return SLAB_TYPES.contains(value);
+        }
         return true;
     }
 
@@ -291,7 +295,7 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
 
     private static String firstAllowedProperty(Material material, Map<String, String> properties) {
         for (Map.Entry<String, String> entry : properties.entrySet()) {
-            if (isDefaultPropertyAllowed(material, entry.getKey(), entry.getValue())) {
+            if (isDefaultPropertyAllowed(material, entry.getKey())) {
                 return entry.getKey();
             }
         }
@@ -300,7 +304,7 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
 
     private static String nextProperty(Set<String> properties, String selected, Material material) {
         List<String> ordered = properties.stream()
-                .filter(property -> isDefaultPropertyAllowed(material, property, ""))
+                .filter(property -> isDefaultPropertyAllowed(material, property))
                 .toList();
         if (ordered.isEmpty()) return null;
         int index = ordered.indexOf(selected);
