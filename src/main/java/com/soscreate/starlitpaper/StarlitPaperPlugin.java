@@ -11,18 +11,27 @@ import java.util.Locale;
 
 public final class StarlitPaperPlugin extends JavaPlugin implements CommandExecutor {
     private SkyRenderer renderer;
+    private StarlitModAdapter.Report adapterReport;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         migrateLegacyConfig();
+        adapterReport = new StarlitModAdapter(this).inspectConfiguredArchive();
+        if (adapterReport.valid()) {
+            getLogger().info("Starlit adapter: " + adapterReport.message()
+                    + " Найдено shader-ресурсов: " + adapterReport.shaderResources()
+                    + "; семейств переведено: " + adapterReport.translatedFamilies().size()
+                    + ". Paper-реализации: " + String.join(", ", adapterReport.translatedFamilies()));
+        } else {
+            getLogger().info("Starlit adapter: " + adapterReport.message());
+        }
         renderer = new SkyRenderer(this);
         renderer.start();
         if (getCommand("starlit") != null) getCommand("starlit").setExecutor(this);
-        getLogger().info("StarlitPaper 1.1.0 enabled. High-detail procedural sky effects are active.");
-        getLogger().warning("Paper particles recreate the visual layers; original client GPU shaders are not loaded.");
+        getLogger().info("StarlitPaper 1.2.0 enabled. Procedural Paper sky adapter is active.");
+        getLogger().warning("Fabric classes and GPU shaders are not executed: their visual systems are translated to Paper particles for vanilla clients.");
     }
-
 
     /** Upgrades the previous particle prototype config without discarding user settings. */
     private void migrateLegacyConfig() {
@@ -50,7 +59,7 @@ public final class StarlitPaperPlugin extends JavaPlugin implements CommandExecu
         }
         if (changed) {
             saveConfig();
-            getLogger().info("Migrated old configuration to StarlitPaper 1.1.0 format.");
+            getLogger().info("Migrated old configuration to StarlitPaper 1.2.0 format.");
         }
     }
 
@@ -65,7 +74,7 @@ public final class StarlitPaperPlugin extends JavaPlugin implements CommandExecu
 
         if (sub.equals("help")) {
             sender.sendMessage(ChatColor.GOLD + "StarlitPaper — команды:");
-            sender.sendMessage(ChatColor.YELLOW + "/starlit status" + ChatColor.GRAY + " — состояние эффектов");
+            sender.sendMessage(ChatColor.YELLOW + "/starlit status" + ChatColor.GRAY + " — состояние эффектов и адаптера");
             sender.sendMessage(ChatColor.YELLOW + "/starlit toggle" + ChatColor.GRAY + " — включить/выключить небо");
             sender.sendMessage(ChatColor.YELLOW + "/starlit reload" + ChatColor.GRAY + " — перечитать config.yml");
             sender.sendMessage(ChatColor.YELLOW + "/starlit meteor" + ChatColor.GRAY + " — вызвать метеор для себя");
@@ -103,6 +112,10 @@ public final class StarlitPaperPlugin extends JavaPlugin implements CommandExecu
                 sender.sendMessage(ChatColor.GRAY + "Игроков онлайн: " + getServer().getOnlinePlayers().size());
                 sender.sendMessage(ChatColor.GRAY + "Интервал: "
                         + getConfig().getInt("render-interval-ticks", 10) + " тиков");
+                sender.sendMessage(ChatColor.GRAY + "Адаптер Starlit: "
+                        + (adapterReport != null && adapterReport.valid()
+                        ? ChatColor.GREEN + "архив распознан, shader-ресурсов: " + adapterReport.shaderResources()
+                        : ChatColor.YELLOW + "встроенный переводчик активен; оригинальный JAR не найден/не прошёл проверку"));
             }
             case "toggle" -> {
                 boolean enabled = !getConfig().getBoolean("enabled", true);
@@ -114,8 +127,9 @@ public final class StarlitPaperPlugin extends JavaPlugin implements CommandExecu
             }
             case "reload" -> {
                 reloadConfig();
+                adapterReport = new StarlitModAdapter(this).inspectConfiguredArchive();
                 renderer.reload();
-                sender.sendMessage(ChatColor.GREEN + "Настройки StarlitPaper перечитаны.");
+                sender.sendMessage(ChatColor.GREEN + "Настройки и адаптер Starlit перечитаны.");
             }
             default -> sender.sendMessage(ChatColor.RED + "Неизвестная команда. Используй /starlit help.");
         }

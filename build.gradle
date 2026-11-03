@@ -3,9 +3,9 @@ plugins {
 }
 
 group = 'com.soscreate'
-version = '1.1.0'
+version = '1.2.0'
 
-description = 'High-detail procedural sky recreation inspired by Starlit 1.1.1.'
+description = 'Paper adapter translating Starlit 1.1.1 procedural sky systems.'
 
 java {
     toolchain {

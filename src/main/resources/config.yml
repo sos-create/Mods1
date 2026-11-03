@@ -1,12 +1,14 @@
-# StarlitPaper — settings based on Starlit 1.1.1 defaults
-# Starlit draws procedural GPU shaders. This plugin reconstructs their spatial
-# patterns with server-side particles for unmodified vanilla clients.
+# StarlitPaper 1.2.0 — Paper translation of Starlit 1.1.1
+# Put the original Fabric archive in plugins/StarlitPaper/adapters/.
+# The adapter inspects its metadata and shader catalogue; it never loads Fabric code.
+
+adapter:
+  source-jar: adapters/starlit-1.1.1-mc1.21.4.jar
 
 enabled: true
 render-interval-ticks: 10
 
 performance:
-  # Particle budget per player per render pass. Higher = denser sky and more traffic.
   max-particles-per-pass: 1200
 
 stars:
@@ -18,7 +20,6 @@ stars:
   at-dusk: true
   spikes: true
 
-# Original Starlit intensity is 0..200.
 milky-way: 100
 nebulae: true
 galaxies: true
@@ -37,8 +38,8 @@ meteors:
   wishes: true
 
 aurora:
-  mode: cold # off, cold, always
-  colors: classic # classic, vivid, crimson, ice
+  mode: cold
+  colors: classic
   brightness: 100
 
 atmosphere:
@@ -53,6 +54,5 @@ worlds:
   end-sky: true
   nether-effects: false
 
-# Limitations of the Paper server API:
-# it cannot inject Starlit's original GPU shaders, replace the vanilla sky,
-# or recreate the client-only Mod Menu/keybind and Iris/Oculus integration.
+# Paper has no API for injecting client GLSL into unmodified vanilla clients.
+# The adapter translates procedural shader families to server-side particles.

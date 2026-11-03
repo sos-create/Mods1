@@ -1,9 +1,9 @@
 name: StarlitPaper
-version: 1.1.0
+version: 1.2.0
 main: com.soscreate.starlitpaper.StarlitPaperPlugin
 api-version: '1.21.4'
 author: sos-create
-description: High-detail procedural sky recreation inspired by Starlit.
+description: Paper adapter translating Starlit procedural sky effects.
 website: https://github.com/sos-create/Mods1
 commands:
   starlit:
