@@ -7,7 +7,7 @@ render-interval-ticks: 10
 
 performance:
   # Particle budget per player per render pass. Higher = denser sky and more traffic.
-  max-particles-per-pass: 700
+  max-particles-per-pass: 1200
 
 stars:
   enabled: true
