@@ -28,5 +28,5 @@ jobs:
       - name: Upload Paper plugin
         uses: actions/upload-artifact@v4
         with:
-          name: StarlitPaper
-          path: build/libs/StarlitPaper-*.jar
+          name: zima
+          path: build/libs/zima.jar
