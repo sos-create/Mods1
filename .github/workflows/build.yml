@@ -1,4 +1,4 @@
-name: Build StarlitPaper
+name: Build StarlitPaper and UniversalModSync adapter
 
 on:
   push:
@@ -23,9 +23,14 @@ jobs:
           java-version: '21'
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-      - name: Build and test plugin
+      - name: Build and test plugin and adapter
         run: gradle --no-daemon clean build
-      - name: Upload Paper plugin
+      - name: Upload UniversalModSync adapter
+        uses: actions/upload-artifact@v4
+        with:
+          name: starlit-universalmodsync-adapter
+          path: build/libs/starlit-universalmodsync-adapter.jar
+      - name: Upload standalone Paper plugin
         uses: actions/upload-artifact@v4
         with:
           name: zima
