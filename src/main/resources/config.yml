@@ -1,31 +1,29 @@
-# StarlitPaper 1.0.0
-# Server-side particle recreation. No Fabric Loader/API or client mod is required.
+# StarlitPaper — settings based on Starlit 1.1.1 defaults
+# Starlit draws procedural GPU shaders. This plugin reconstructs their spatial
+# patterns with server-side particles for unmodified vanilla clients.
 
 enabled: true
-render-interval-ticks: 10
+render-interval-ticks: 5
 
 performance:
-  max-particles-per-pass: 210
+  # Particle budget per player per render pass. Higher = denser sky and more traffic.
+  max-particles-per-pass: 1050
 
 stars:
   enabled: true
-  count: 135
+  count: 5000
   brightness: 100
   twinkle: 50
   colored: true
   at-dusk: true
+  spikes: true
 
-milky-way:
-  enabled: true
-  density: 34
-nebulae:
-  enabled: true
-galaxies:
-  enabled: true
-planets:
-  enabled: true
-moon-glow:
-  enabled: true
+# Original Starlit intensity is 0..200.
+milky-way: 100
+nebulae: true
+galaxies: true
+planets: true
+moon-glow: true
 constellations:
   enabled: true
   lines: false
@@ -35,13 +33,13 @@ meteors:
   fireballs: true
   meteor-showers: 15
   comets: 10
-  announce: false
+  announce: true
   wishes: true
 
 aurora:
-  enabled: true
+  mode: cold # off, cold, always
+  colors: classic # classic, vivid, crimson, ice
   brightness: 100
-  mode: cold
 
 atmosphere:
   enabled: true
@@ -55,5 +53,6 @@ worlds:
   end-sky: true
   nether-effects: false
 
-# Paper particles cannot replace GPU shaders, recolor the vanilla sky,
-# change the sun/moon renderer, or add Starlit's client keybinds/ModMenu screen.
+# Limitations of the Paper server API:
+# it cannot inject Starlit's original GPU shaders, replace the vanilla sky,
+# or recreate the client-only Mod Menu/keybind and Iris/Oculus integration.
