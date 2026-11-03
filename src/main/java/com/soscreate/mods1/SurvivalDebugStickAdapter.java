@@ -14,6 +14,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.HandlerList;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.ShapelessRecipe;
@@ -35,18 +36,24 @@ import java.util.regex.Pattern;
 /**
  * Paper-side reimplementation of Survival Debug Stick Mod.
  *
- * It uses Minecraft's vanilla DEBUG_STICK item and vanilla block states.
- * No Fabric classes or Fabric API are loaded on Paper.
+ * The Fabric mod uses AttackBlockCallback for left-clicks and a mixin to
+ * enable the vanilla debug-stick behaviour outside creative mode. This
+ * adapter replaces those hooks with Paper events and Bukkit BlockData.
+ * No Fabric classes or Fabric API are loaded by this adapter.
  */
 public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
     public static final String TARGET_FILE = "survival-debug-mod-1.2.2_1.21.2.jar";
 
-    private static final Pattern PROPERTY_PATTERN = Pattern.compile("([a-z0-9_]+)=([a-z0-9_]+)");
+    private static final Pattern PROPERTY_PATTERN =
+            Pattern.compile("([a-z0-9_]+)=([a-z0-9_]+)");
     private static final List<String> BOOL = List.of("false", "true");
+    private static final List<String> SLAB_TYPES = List.of("top", "bottom");
+    private static final List<String> BAMBOO_LEAVES = List.of("none", "large");
     private static final Map<String, List<String>> ENUM_VALUES = createEnumValues();
 
     private JavaPlugin plugin;
     private NamespacedKey recipeKey;
+    private NamespacedKey lastModifiedKey;
     private boolean enabled;
 
     @Override
@@ -56,14 +63,17 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
 
     @Override
     public Set<String> supportedModFiles() {
+        // Exact archive-name matching is intentional. Do not replace with a mask.
         return Set.of(TARGET_FILE);
     }
 
     @Override
     public void onEnable(JavaPlugin plugin, List<ModDescriptor> supportedMods) {
         if (enabled) return;
+
         this.plugin = plugin;
         this.recipeKey = new NamespacedKey(plugin, "survival_debug_stick_recipe");
+        this.lastModifiedKey = new NamespacedKey(plugin, "survival_debug_stick_last_modified");
 
         Bukkit.getPluginManager().registerEvents(this, plugin);
         registerRecipe();
@@ -71,7 +81,8 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
 
         plugin.getLogger().info("Survival Debug Stick adapter enabled for "
                 + supportedMods.stream().map(ModDescriptor::fileName).distinct().toList()
-                + ". Uses vanilla DEBUG_STICK; no client mod is required.");
+                + ". Left-click with the vanilla debug stick in survival/adventure mode. "
+                + "No client mod or Fabric API is required.");
     }
 
     private void registerRecipe() {
@@ -86,10 +97,14 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
         Bukkit.addRecipe(recipe);
     }
 
+    /**
+     * The original mod registers Fabric's AttackBlockCallback, so its trigger
+     * is a left-click on a block, not a right-click interaction.
+     */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onUseDebugStick(PlayerInteractEvent event) {
         if (event.getHand() != EquipmentSlot.HAND) return;
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        if (event.getAction() != Action.LEFT_CLICK_BLOCK) return;
 
         ItemStack item = event.getItem();
         Block block = event.getClickedBlock();
@@ -98,61 +113,144 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
         GameMode mode = event.getPlayer().getGameMode();
         if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR) return;
 
+        // Prevent a debug-stick click from starting normal block mining.
         event.setCancelled(true);
 
         try {
-            Map<String, String> properties = readProperties(block.getBlockData().getAsString());
-            if (properties.isEmpty()) {
-                event.getPlayer().sendMessage(ChatColor.RED + "У этого блока нет изменяемых свойств.");
-                return;
-            }
-
             ItemMeta meta = item.getItemMeta();
             if (meta == null) return;
 
-            NamespacedKey selectedKey = selectedPropertyKey(block.getType());
-            String selected = meta.getPersistentDataContainer().get(selectedKey, PersistentDataType.STRING);
+            // The original Fabric callback throttles repeated use for 5 ticks.
+            long currentTick = block.getWorld().getGameTime();
+            Long lastTick = meta.getPersistentDataContainer()
+                    .get(lastModifiedKey, PersistentDataType.LONG);
+            if (lastTick != null && currentTick >= lastTick && currentTick - lastTick < 5L) {
+                return;
+            }
+            meta.getPersistentDataContainer().set(
+                    lastModifiedKey, PersistentDataType.LONG, currentTick);
+            item.setItemMeta(meta);
 
-            if (event.getPlayer().isSneaking()) {
-                String next = nextProperty(properties.keySet(), selected);
-                if (next == null) {
-                    event.getPlayer().sendMessage(ChatColor.RED + "Не удалось выбрать свойство блока.");
-                    return;
-                }
-                meta.getPersistentDataContainer().set(selectedKey, PersistentDataType.STRING, next);
-                item.setItemMeta(meta);
-                event.getPlayer().sendMessage(ChatColor.YELLOW + "Свойство: "
-                        + ChatColor.WHITE + next + ChatColor.GRAY + " (" + block.getType().name().toLowerCase(Locale.ROOT) + ")");
+            if (!isDefaultBlockAllowed(block.getType())) {
+                event.getPlayer().sendMessage(ChatColor.RED
+                        + "Этот блок не разрешён настройками Survival Debug Stick.");
                 return;
             }
 
-            if (selected == null || !properties.containsKey(selected)) {
-                selected = properties.keySet().iterator().next();
-                meta.getPersistentDataContainer().set(selectedKey, PersistentDataType.STRING, selected);
+            Map<String, String> properties = readProperties(block.getBlockData().getAsString());
+            if (properties.isEmpty()) {
+                event.getPlayer().sendMessage(ChatColor.RED
+                        + "У этого блока нет изменяемых свойств.");
+                return;
+            }
+
+            NamespacedKey selectedKey = selectedPropertyKey(block.getType());
+            String selected = meta.getPersistentDataContainer()
+                    .get(selectedKey, PersistentDataType.STRING);
+
+            if (event.getPlayer().isSneaking()) {
+                String next = nextProperty(properties.keySet(), selected, block.getType());
+                if (next == null) {
+                    event.getPlayer().sendMessage(ChatColor.RED
+                            + "Не удалось выбрать доступное свойство блока.");
+                    return;
+                }
+
+                meta.getPersistentDataContainer().set(
+                        selectedKey, PersistentDataType.STRING, next);
+                item.setItemMeta(meta);
+                event.getPlayer().sendMessage(ChatColor.YELLOW + "Свойство: "
+                        + ChatColor.WHITE + next + ChatColor.GRAY + " ("
+                        + block.getType().name().toLowerCase(Locale.ROOT) + ")");
+                return;
+            }
+
+            if (selected == null || !properties.containsKey(selected)
+                    || !isDefaultPropertyAllowed(block.getType(), selected,
+                    properties.getOrDefault(selected, ""))) {
+                selected = firstAllowedProperty(block.getType(), properties);
+                if (selected == null) {
+                    event.getPlayer().sendMessage(ChatColor.RED
+                            + "У этого блока нет доступных для изменения свойств.");
+                    return;
+                }
+                meta.getPersistentDataContainer().set(
+                        selectedKey, PersistentDataType.STRING, selected);
                 item.setItemMeta(meta);
             }
 
             String current = properties.get(selected);
-            List<String> candidates = candidatesFor(selected, current);
-            String nextValue = findNextValidValue(block.getBlockData().getAsString(), selected, current, candidates);
+            List<String> candidates = candidatesFor(selected, current).stream()
+                    .filter(value -> isDefaultPropertyAllowed(block.getType(), selected, value))
+                    .toList();
+
+            String nextValue = findNextValidValue(
+                    block.getBlockData().getAsString(), selected, current, candidates);
             if (nextValue == null) {
-                event.getPlayer().sendMessage(ChatColor.RED + "Для свойства " + selected + " не найдено другое допустимое значение.");
+                event.getPlayer().sendMessage(ChatColor.RED
+                        + "Для свойства " + selected
+                        + " не найдено другого разрешённого значения.");
                 return;
             }
 
-            String updatedState = replaceProperty(block.getBlockData().getAsString(), selected, nextValue);
+            String updatedState = replaceProperty(
+                    block.getBlockData().getAsString(), selected, nextValue);
             BlockData newData = Bukkit.createBlockData(updatedState);
             block.setBlockData(newData, true);
-            event.getPlayer().sendMessage(ChatColor.GREEN + selected + ChatColor.GRAY + ": "
-                    + ChatColor.WHITE + current + ChatColor.GRAY + " → " + ChatColor.WHITE + nextValue);
+
+            event.getPlayer().sendMessage(ChatColor.GREEN + selected + ChatColor.GRAY
+                    + ": " + ChatColor.WHITE + current + ChatColor.GRAY
+                    + " → " + ChatColor.WHITE + nextValue);
         } catch (IllegalArgumentException | IllegalStateException exception) {
-            plugin.getLogger().log(Level.FINE, "Could not cycle debug-stick block property", exception);
-            event.getPlayer().sendMessage(ChatColor.RED + "Не удалось изменить свойство этого блока.");
+            plugin.getLogger().log(Level.FINE,
+                    "Could not cycle debug-stick block property", exception);
+            event.getPlayer().sendMessage(ChatColor.RED
+                    + "Не удалось изменить свойство этого блока.");
         }
     }
 
     private NamespacedKey selectedPropertyKey(Material material) {
-        return new NamespacedKey(plugin, "selected_" + material.name().toLowerCase(Locale.ROOT));
+        return new NamespacedKey(plugin,
+                "selected_" + material.name().toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * Mirrors the default whitelist in the Fabric mod's SDSConfig:
+     * iron bars, bamboo, stairs, walls, glass panes, fences and slabs.
+     */
+    static boolean isDefaultBlockAllowed(Material material) {
+        String name = material.name();
+        return material == Material.IRON_BARS
+                || material == Material.BAMBOO
+                || name.endsWith("_STAIRS")
+                || name.endsWith("_WALL")
+                || name.endsWith("_FENCE")
+                || name.equals("GLASS_PANE")
+                || name.endsWith("_STAINED_GLASS_PANE")
+                || name.endsWith("_SLAB");
+    }
+
+    /**
+     * Mirrors the mod's default property allow/deny rules. waterlogged is
+     * forbidden globally; bamboo and slabs have narrower explicit allowlists.
+     */
+    static boolean isDefaultPropertyAllowed(Material material, String property, String value) {
+        if (!isDefaultBlockAllowed(material) || property == null || value == null) return false;
+        if (property.equals("waterlogged")) return false;
+
+        if (material == Material.BAMBOO) {
+            return switch (property) {
+                case "age" -> true;
+                case "leaves" -> BAMBOO_LEAVES.contains(value);
+                default -> false;
+            };
+        }
+
+        if (material.name().endsWith("_SLAB")) {
+            return property.equals("type") && SLAB_TYPES.contains(value);
+        }
+
+        return true;
     }
 
     static Map<String, String> readProperties(String blockData) {
@@ -171,7 +269,9 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
     static String replaceProperty(String blockData, String property, String value) {
         int start = blockData.indexOf('[');
         int end = blockData.lastIndexOf(']');
-        if (start < 0 || end <= start) throw new IllegalArgumentException("Block has no properties");
+        if (start < 0 || end <= start) {
+            throw new IllegalArgumentException("Block has no properties");
+        }
 
         String inside = blockData.substring(start + 1, end);
         Matcher matcher = PROPERTY_PATTERN.matcher(inside);
@@ -179,7 +279,8 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
         boolean found = false;
         while (matcher.find()) {
             if (matcher.group(1).equals(property)) {
-                matcher.appendReplacement(changed, Matcher.quoteReplacement(property + "=" + value));
+                matcher.appendReplacement(changed,
+                        Matcher.quoteReplacement(property + "=" + value));
                 found = true;
             }
         }
@@ -188,23 +289,39 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
         return blockData.substring(0, start + 1) + changed + blockData.substring(end);
     }
 
-    private static String nextProperty(Set<String> properties, String selected) {
-        List<String> ordered = new ArrayList<>(properties);
+    private static String firstAllowedProperty(Material material, Map<String, String> properties) {
+        for (Map.Entry<String, String> entry : properties.entrySet()) {
+            if (isDefaultPropertyAllowed(material, entry.getKey(), entry.getValue())) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    private static String nextProperty(Set<String> properties, String selected, Material material) {
+        List<String> ordered = properties.stream()
+                .filter(property -> isDefaultPropertyAllowed(material, property, ""))
+                .toList();
         if (ordered.isEmpty()) return null;
         int index = ordered.indexOf(selected);
         return ordered.get((index + 1) % ordered.size());
     }
 
-    private String findNextValidValue(String state, String property, String current, List<String> candidates) {
+    private String findNextValidValue(
+            String state, String property, String current, List<String> candidates) {
+        if (candidates.isEmpty()) return null;
+
         int currentIndex = candidates.indexOf(current);
         for (int offset = 1; offset <= candidates.size(); offset++) {
-            String candidate = candidates.get((Math.max(currentIndex, -1) + offset) % candidates.size());
+            String candidate = candidates.get((Math.max(currentIndex, -1) + offset)
+                    % candidates.size());
             if (candidate.equals(current)) continue;
             try {
                 Bukkit.createBlockData(replaceProperty(state, property, candidate));
                 return candidate;
             } catch (IllegalArgumentException ignored) {
-                // This value is not valid for this specific block/property.
+                // A value can be valid for the property in general but invalid
+                // for this particular block state.
             }
         }
         return null;
@@ -230,7 +347,8 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
                 default -> 15;
             };
             for (int i = 0; i <= maximum; i++) values.add(Integer.toString(i));
-            if (property.equals("distance") || property.equals("layers") || property.equals("delay")) {
+            if (property.equals("distance") || property.equals("layers")
+                    || property.equals("delay")) {
                 for (int i = 1; i <= maximum; i++) values.add(Integer.toString(i));
             }
         }
@@ -247,31 +365,37 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
         values.put("half", List.of("top", "bottom", "upper", "lower"));
         values.put("hinge", List.of("left", "right"));
         values.put("face", List.of("floor", "wall", "ceiling"));
-        values.put("shape", List.of("straight", "inner_left", "inner_right", "outer_left", "outer_right",
-                "north_south", "east_west", "ascending_east", "ascending_west", "ascending_north",
-                "ascending_south", "south_east", "south_west", "north_west", "north_east"));
-        values.put("type", List.of("single", "double", "top", "bottom", "normal", "sticky", "head", "tail", "left", "right"));
+        values.put("shape", List.of("straight", "inner_left", "inner_right", "outer_left",
+                "outer_right", "north_south", "east_west", "ascending_east",
+                "ascending_west", "ascending_north", "ascending_south", "south_east",
+                "south_west", "north_west", "north_east"));
+        values.put("type", List.of("single", "double", "top", "bottom", "normal",
+                "sticky", "head", "tail", "left", "right"));
         values.put("mode", List.of("compare", "subtract"));
-        values.put("instrument", List.of("harp", "basedrum", "snare", "hat", "bass", "flute", "bell",
-                "guitar", "chime", "xylophone", "iron_xylophone", "cow_bell", "didgeridoo", "bit",
-                "banjo", "pling"));
-        values.put("orientation", List.of("down_east", "down_west", "down_north", "down_south",
-                "up_east", "up_west", "up_north", "up_south", "west_up", "east_up", "north_up",
-                "south_up", "west_down", "east_down", "north_down", "south_down"));
+        values.put("instrument", List.of("harp", "basedrum", "snare", "hat", "bass",
+                "flute", "bell", "guitar", "chime", "xylophone", "iron_xylophone",
+                "cow_bell", "didgeridoo", "bit", "banjo", "pling"));
+        values.put("orientation", List.of("down_east", "down_west", "down_north",
+                "down_south", "up_east", "up_west", "up_north", "up_south",
+                "west_up", "east_up", "north_up", "south_up", "west_down",
+                "east_down", "north_down", "south_down"));
         values.put("vertical_direction", List.of("up", "down"));
         values.put("part", List.of("head", "foot"));
         values.put("attachment", List.of("floor", "ceiling", "single_wall", "double_wall"));
         values.put("thickness", List.of("tip_merge", "tip", "frustum", "middle", "base"));
         values.put("tilt", List.of("none", "unstable", "partial", "full"));
+        values.put("leaves", List.of("none", "small", "large"));
         return Map.copyOf(values);
     }
 
     @Override
     public void onDisable() {
         if (!enabled) return;
-        org.bukkit.event.HandlerList.unregisterAll(this);
+        HandlerList.unregisterAll(this);
         if (recipeKey != null) Bukkit.removeRecipe(recipeKey);
         enabled = false;
         plugin = null;
+        recipeKey = null;
+        lastModifiedKey = null;
     }
 }
