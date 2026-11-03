@@ -1,0 +1,59 @@
+# StarlitPaper 1.0.0
+# Server-side particle recreation. No Fabric Loader/API or client mod is required.
+
+enabled: true
+render-interval-ticks: 10
+
+performance:
+  max-particles-per-pass: 210
+
+stars:
+  enabled: true
+  count: 135
+  brightness: 100
+  twinkle: 50
+  colored: true
+  at-dusk: true
+
+milky-way:
+  enabled: true
+  density: 34
+nebulae:
+  enabled: true
+galaxies:
+  enabled: true
+planets:
+  enabled: true
+moon-glow:
+  enabled: true
+constellations:
+  enabled: true
+  lines: false
+
+meteors:
+  shooting-stars: 50
+  fireballs: true
+  meteor-showers: 15
+  comets: 10
+  announce: false
+  wishes: true
+
+aurora:
+  enabled: true
+  brightness: 100
+  mode: cold
+
+atmosphere:
+  enabled: true
+  sunsets: true
+  halos: true
+  rainbows: true
+  birds: true
+
+worlds:
+  overworld: true
+  end-sky: true
+  nether-effects: false
+
+# Paper particles cannot replace GPU shaders, recolor the vanilla sky,
+# change the sun/moon renderer, or add Starlit's client keybinds/ModMenu screen.

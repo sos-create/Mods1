@@ -2,8 +2,10 @@ plugins {
     id 'java'
 }
 
-group = 'com.soscreate.mods1'
+group = 'com.soscreate'
 version = '1.0.0'
+
+description = 'Paper-side particle-based recreation of the Starlit client sky effects.'
 
 java {
     toolchain {
@@ -16,29 +18,11 @@ repositories {
     maven { url = 'https://repo.papermc.io/repository/maven-public/' }
 }
 
-sourceSets {
-    adapterApi {
-        java.srcDir 'src/adapterApi/java'
-    }
-    main {
-        compileClasspath += sourceSets.adapterApi.output
-    }
-    test {
-        compileClasspath += sourceSets.adapterApi.output
-        runtimeClasspath += sourceSets.adapterApi.output
-    }
-}
-
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
-    adapterApiCompileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
     testImplementation 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
-}
-
-tasks.named('compileJava') {
-    dependsOn tasks.named('compileAdapterApiJava')
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -50,8 +34,10 @@ tasks.test {
     useJUnitPlatform()
 }
 
+processResources {
+    filteringCharset = 'UTF-8'
+}
+
 jar {
-    // These two classes are compile-time API stubs only. The real classes
-    // are supplied by UniversalModSync at runtime through its parent loader.
-    exclude 'com/soscreate/universalmodsync/**'
+    archiveBaseName = 'StarlitPaper'
 }

@@ -1,4 +1,4 @@
-name: Build Survival Debug Stick Adapter
+name: Build StarlitPaper
 
 on:
   push:
@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -20,10 +23,10 @@ jobs:
           java-version: '21'
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-      - name: Build adapter
+      - name: Build and test plugin
         run: gradle --no-daemon clean build
-      - name: Upload adapter JAR
+      - name: Upload Paper plugin
         uses: actions/upload-artifact@v4
         with:
-          name: SurvivalDebugStickAdapter
-          path: build/libs/*.jar
+          name: StarlitPaper
+          path: build/libs/StarlitPaper-*.jar

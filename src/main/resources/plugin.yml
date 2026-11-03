@@ -1,0 +1,16 @@
+name: StarlitPaper
+version: 1.0.0
+main: com.soscreate.starlitpaper.StarlitPaperPlugin
+api-version: '1.21.4'
+author: sos-create
+description: Particle-based Paper recreation of Starlit's living sky effects.
+website: https://github.com/sos-create/Mods1
+commands:
+  starlit:
+    description: Controls StarlitPaper sky effects.
+    usage: /starlit <status|toggle|reload|meteor|wish|help>
+    aliases: [starlitpaper]
+permissions:
+  starlit.admin:
+    description: Allows changing StarlitPaper settings and running admin commands.
+    default: op
