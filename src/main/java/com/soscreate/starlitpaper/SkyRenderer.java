@@ -147,7 +147,7 @@ final class SkyRenderer {
             if (plugin.getConfig().getBoolean("galaxies", true)) renderGalaxies(player, eye, view, budget, state);
             if (plugin.getConfig().getBoolean("planets", true)) renderPlanets(player, eye, view, budget, world);
             if (plugin.getConfig().getBoolean("moon-glow", true)) renderMoonGlow(player, eye, view, budget, world);
-            if (plugin.getConfig().getBoolean("constellations", true)) renderConstellations(player, eye, view, budget, state);
+            if (plugin.getConfig().getBoolean("constellations.enabled", true)) renderConstellations(player, eye, view, budget, state);
             renderAurora(player, eye, view, budget, state, world);
             scheduleSkyEvents(player, state, world);
             renderSkyEvents(player, eye, view, budget, state);
@@ -620,7 +620,7 @@ final class SkyRenderer {
     }
 
     private static Location skyPoint(Location eye,double x,double y,double z,double radius) {
-        return eye.clone().add(x*radius,y*radius,z*radius);
+        Location point=eye.clone().add(x*radius,y*radius,z*radius);\n        point.setY(Math.max(point.getWorld().getMinHeight()+2,Math.min(point.getWorld().getMaxHeight()-2,point.getY())));\n        return point;
     }
 
     private static View view(Player player) {
