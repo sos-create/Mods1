@@ -1,0 +1,52 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.soscreate.mods1'
+version = '1.0.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+}
+
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    adapterApiCompileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+}
+
+sourceSets {
+    adapterApi {
+        java.srcDir 'src/adapterApi/java'
+    }
+    main {
+        compileClasspath += sourceSets.adapterApi.output
+    }
+}
+
+tasks.named('compileJava') {
+    dependsOn tasks.named('compileAdapterApiJava')
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.test {
+    useJUnitPlatform()
+}
+
+jar {
+    // These two classes are compile-time API stubs only. The real classes
+    // are supplied by UniversalModSync at runtime through its parent loader.
+    exclude 'com/soscreate/universalmodsync/**'
+}
