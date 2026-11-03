@@ -74,7 +74,7 @@ final class StarCatalog {
         if (length < 1.0e-9) return new double[]{0, 1, 0};
         return new double[]{x/length, y/length, z/length};
     }
-    private static double[] normalize(double[] v) { return normalize(v[0], v[1], v[2]); }
+    static double[] normalize(double[] v) { return normalize(v[0], v[1], v[2]); }
     private static double[] cross(double ax, double ay, double az, double[] b) {
         return new double[]{ay*b[2]-az*b[1], az*b[0]-ax*b[2], ax*b[1]-ay*b[0]};
     }
