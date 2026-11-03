@@ -16,13 +16,6 @@ repositories {
     maven { url = 'https://repo.papermc.io/repository/maven-public/' }
 }
 
-dependencies {
-    compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
-    adapterApiCompileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
-}
-
 sourceSets {
     adapterApi {
         java.srcDir 'src/adapterApi/java'
@@ -30,6 +23,13 @@ sourceSets {
     main {
         compileClasspath += sourceSets.adapterApi.output
     }
+}
+
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    adapterApiCompileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
 }
 
 tasks.named('compileJava') {
