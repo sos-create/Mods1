@@ -29,6 +29,7 @@ sourceSets {
     // links to the real API exported by the UniversalModSync plugin.
     adapterApi {
         java.srcDir 'src/adapterApi/java'
+        compileClasspath += configurations.compileClasspath
     }
     adapter {
         java {
