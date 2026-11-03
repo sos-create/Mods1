@@ -39,5 +39,5 @@ processResources {
 }
 
 jar {
-    archiveBaseName = 'StarlitPaper'
+    archiveFileName = 'zima.jar'
 }
