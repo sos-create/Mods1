@@ -18,8 +18,8 @@ public final class StarlitPaperPlugin extends JavaPlugin implements CommandExecu
         renderer = new SkyRenderer(this);
         renderer.start();
         if (getCommand("starlit") != null) getCommand("starlit").setExecutor(this);
-        getLogger().info("StarlitPaper enabled. Particle-based sky effects are active.");
-        getLogger().warning("This plugin recreates sky visuals with particles; it does not load Fabric or replace Minecraft sky shaders.");
+        getLogger().info("StarlitPaper 1.1.0 enabled. High-detail procedural sky effects are active.");
+        getLogger().warning("Paper particles recreate the visual layers; original client GPU shaders are not loaded.");
     }
 
     @Override
