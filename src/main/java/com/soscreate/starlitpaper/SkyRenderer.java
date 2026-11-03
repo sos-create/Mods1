@@ -591,7 +591,7 @@ final class SkyRenderer {
             Color tint=mix(rgb(125,55,205),rgb(220,100,210),SkyNoise.clamp(cloud,0,1));
             dust(player,skyPoint(eye,d[0],d[1],d[2],37),budget,tint,(float)(.5+detail));
         }
-        renderStars(player,eye,view,budget,state,world);
+        if(plugin.getConfig().getBoolean("stars.enabled",true)) renderStars(player,eye,view,budget,state,world);
         renderSkyEvents(player,eye,view,budget,state);
     }
 
@@ -621,7 +621,8 @@ final class SkyRenderer {
 
     private static Location skyPoint(Location eye,double x,double y,double z,double radius) {
         Location point=eye.clone().add(x*radius,y*radius,z*radius);
-        point.setY(Math.max(point.getWorld().getMinHeight()+2,Math.min(point.getWorld().getMaxHeight()-2,point.getY())));\n        return point;
+        point.setY(Math.max(point.getWorld().getMinHeight()+2,Math.min(point.getWorld().getMaxHeight()-2,point.getY())));
+        return point;
     }
 
     private static View view(Player player) {
