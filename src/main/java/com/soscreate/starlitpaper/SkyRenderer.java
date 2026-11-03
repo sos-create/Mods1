@@ -130,7 +130,7 @@ final class SkyRenderer {
                 renderEnd(player, eye, view, budget, state, world);
             return;
         }
-        if (environment != World.Environment.NORMAL
+        if (environment == World.Environment.NORMAL
                 && !plugin.getConfig().getBoolean("worlds.overworld", true)) return;
 
         long time = world.getTime();
@@ -620,7 +620,8 @@ final class SkyRenderer {
     }
 
     private static Location skyPoint(Location eye,double x,double y,double z,double radius) {
-        Location point=eye.clone().add(x*radius,y*radius,z*radius);\n        point.setY(Math.max(point.getWorld().getMinHeight()+2,Math.min(point.getWorld().getMaxHeight()-2,point.getY())));\n        return point;
+        Location point=eye.clone().add(x*radius,y*radius,z*radius);
+        point.setY(Math.max(point.getWorld().getMinHeight()+2,Math.min(point.getWorld().getMaxHeight()-2,point.getY())));\n        return point;
     }
 
     private static View view(Player player) {
