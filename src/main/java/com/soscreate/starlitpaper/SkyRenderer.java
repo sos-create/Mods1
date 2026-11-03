@@ -1,6 +1,6 @@
 package com.soscreate.starlitpaper;
 
-import org.bukkit.Biome;
+import org.bukkit.block.Biome;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Particle;
