@@ -76,6 +76,7 @@ final class SkyRenderer {
         PlayerState state = stateFor(player);
         state.meteorStart = ticks + 1;
         state.meteorX = state.random.nextDouble() * .7 - .35;
+        state.meteorDirection = randomUpper(state.random);
         state.meteorDuration = 34;
         state.meteorFireball = true;
         state.showerRemaining = 0;
@@ -103,9 +104,10 @@ final class SkyRenderer {
         return states.compute(player.getUniqueId(), (id, old) -> {
             long seed = player.getWorld().getSeed() ^ StarCatalog.SEED;
             if (old == null || old.worldSeed != player.getWorld().getSeed()) {
+                int configured = SkyMath.clamp(plugin.getConfig().getInt("stars.count", 5000), 0, 12000);
+                int count = configured < 500 ? 0 : Math.min(12000, Math.round(configured / 500.0f) * 500);
                 return new PlayerState(seed, player.getWorld().getSeed(),
-                        StarCatalog.generate(SkyMath.clamp(plugin.getConfig().getInt("stars.count", 5000),
-                                500, 12000), plugin.getConfig().getBoolean("stars.colored", true), seed));
+                        StarCatalog.generate(count, plugin.getConfig().getBoolean("stars.colored", true), seed));
             }
             return old;
         });
@@ -502,11 +504,12 @@ final class SkyRenderer {
         if(state.meteorStart<0 && rate>0 && ticks>=state.nextMeteor) {
             state.meteorStart=ticks;
             state.meteorX=state.random.nextDouble()*.9-.45;
+            state.meteorDirection=randomUpper(state.random);
             state.meteorDuration=state.random.nextInt(100)<22?58:34;
             state.meteorFireball=plugin.getConfig().getBoolean("meteors.fireballs",true)
                     && state.random.nextInt(100)<20;
             state.showerRemaining=state.random.nextInt(100)<shower?8+state.random.nextInt(13):0;
-            state.nextMeteor=ticks+Math.max(80,(int)(3000.0/Math.max(1,rate)))
+            state.nextMeteor=ticks+Math.max(100,(int)(15000.0/Math.max(1,rate)))
                     +state.random.nextInt(220);
             if(plugin.getConfig().getBoolean("meteors.announce",true)
                     && state.showerRemaining>0)
@@ -518,6 +521,7 @@ final class SkyRenderer {
         if(state.cometStart<0 && cometRate>0 && ticks>=state.nextComet) {
             state.cometStart=ticks;
             state.cometX=state.random.nextDouble()*.7-.35;
+            state.cometDirection=randomUpper(state.random);
             state.nextComet=ticks+24000L*6+state.random.nextInt(12000);
         }
     }
@@ -531,6 +535,7 @@ final class SkyRenderer {
                     state.showerRemaining--;
                     state.meteorStart=ticks+5;
                     state.meteorX=state.random.nextDouble()*.9-.45;
+                    state.meteorDirection=randomUpper(state.random);
                     state.meteorDuration=30+state.random.nextInt(20);
                     state.meteorFireball=false;
                 }
@@ -545,15 +550,15 @@ final class SkyRenderer {
 
     private void drawMeteor(Player player, Location eye, View view, Budget budget,
                             PlayerState state, double progress) {
-        double x=state.meteorX+progress*.72;
-        double y=.78-progress*.50;
-        double z=.55;
-        VectorBasis b=tangent(view.x,view.y,view.z);
+        double[] base=state.meteorDirection==null?new double[]{view.x,view.y,view.z}:state.meteorDirection;
+        VectorBasis b=tangent(base[0],base[1],base[2]);
         for(int i=0;i<22 && budget.remaining()>0;i++) {
             double tail=i/21.0;
-            double[] d=StarCatalog.normalize(view.x+b.rx*(x-tail*.26),
-                    view.y+y*.02+tail*.12,view.z+b.rz*(x-tail*.26));
-            if(dot(d[0],d[1],d[2],view.x,view.y,view.z)<.1) continue;
+            double along=progress*.62-tail*.34;
+            double lift=progress*.22+tail*.12;
+            double[] d=StarCatalog.normalize(base[0]+b.rx*along+b.ux*lift,
+                    base[1]+b.ry*along+b.uy*lift,base[2]+b.rz*along+b.uz*lift);
+            if(d[1]<-.02 || dot(d[0],d[1],d[2],view.x,view.y,view.z)<.08) continue;
             Color tint=state.meteorFireball
                     ? mix(rgb(255,90,40),rgb(255,225,155),1-tail)
                     : mix(rgb(100,160,255),rgb(255,255,255),1-tail);
@@ -566,14 +571,15 @@ final class SkyRenderer {
 
     private void drawComet(Player player, Location eye, View view, Budget budget,
                            PlayerState state, double progress) {
-        double x=state.cometX+progress*.55;
-        double y=.68-progress*.12;
-        VectorBasis b=tangent(view.x,view.y,view.z);
+        double[] base=state.cometDirection==null?new double[]{view.x,view.y,view.z}:state.cometDirection;
+        VectorBasis b=tangent(base[0],base[1],base[2]);
         for(int i=0;i<36 && budget.remaining()>0;i++) {
             double u=i/35.0;
-            double bend=u*u*.16;
-            double[] d=StarCatalog.normalize(view.x+b.rx*(x-u*.32),
-                    view.y+y*.02+bend,view.z+b.rz*(x-u*.32));
+            double along=progress*.42-u*.31;
+            double bend=u*u*.13;
+            double[] d=StarCatalog.normalize(base[0]+b.rx*along+b.ux*bend,
+                    base[1]+b.ry*along+b.uy*bend,base[2]+b.rz*along+b.uz*bend);
+            if(d[1]<-.03 || dot(d[0],d[1],d[2],view.x,view.y,view.z)<.08) continue;
             Color c=mix(rgb(110,190,255),rgb(255,245,215),Math.pow(1-u,1.7));
             dust(player,skyPoint(eye,d[0],d[1],d[2],35),budget,c,(float)(1.1*(1-u)+.3));
         }
@@ -617,6 +623,14 @@ final class SkyRenderer {
         double y=random.nextDouble()*2-1, a=random.nextDouble()*TAU;
         double r=Math.sqrt(1-y*y);
         return new double[]{r*Math.cos(a),y,r*Math.sin(a)};
+    }
+
+    private static double[] randomUpper(Random random) {
+        double azimuth=random.nextDouble()*TAU;
+        double elevation=.12+random.nextDouble()*.78;
+        double horizontal=Math.cos(elevation);
+        return new double[]{horizontal*Math.cos(azimuth),Math.sin(elevation),
+                horizontal*Math.sin(azimuth)};
     }
 
     private static Location skyPoint(Location eye,double x,double y,double z,double radius) {
@@ -676,6 +690,7 @@ final class SkyRenderer {
         long nextMeteor,nextComet,nextBird,lastRainTick=-1;
         long meteorStart=-1,cometStart=-1,birdStart=-1;
         double meteorX,cometX,birdSide;
+        double[] meteorDirection,cometDirection;
         int meteorDuration,showerRemaining;
         boolean meteorFireball;
         PlayerState(long seed,long worldSeed,List<StarCatalog.Star> stars) {
