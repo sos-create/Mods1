@@ -166,8 +166,7 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
             }
 
             if (selected == null || !properties.containsKey(selected)
-                    || !isDefaultPropertyAllowed(block.getType(), selected,
-                    properties.getOrDefault(selected, ""))) {
+                    || !isDefaultPropertyAllowed(block.getType(), selected)) {
                 selected = firstAllowedProperty(block.getType(), properties);
                 if (selected == null) {
                     event.getPlayer().sendMessage(ChatColor.RED
