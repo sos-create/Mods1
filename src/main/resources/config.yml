@@ -3,11 +3,11 @@
 # patterns with server-side particles for unmodified vanilla clients.
 
 enabled: true
-render-interval-ticks: 5
+render-interval-ticks: 10
 
 performance:
   # Particle budget per player per render pass. Higher = denser sky and more traffic.
-  max-particles-per-pass: 1050
+  max-particles-per-pass: 700
 
 stars:
   enabled: true
