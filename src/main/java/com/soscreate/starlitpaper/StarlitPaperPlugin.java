@@ -15,11 +15,43 @@ public final class StarlitPaperPlugin extends JavaPlugin implements CommandExecu
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        migrateLegacyConfig();
         renderer = new SkyRenderer(this);
         renderer.start();
         if (getCommand("starlit") != null) getCommand("starlit").setExecutor(this);
         getLogger().info("StarlitPaper 1.1.0 enabled. High-detail procedural sky effects are active.");
         getLogger().warning("Paper particles recreate the visual layers; original client GPU shaders are not loaded.");
+    }
+
+
+    /** Upgrades the previous particle prototype config without discarding user settings. */
+    private void migrateLegacyConfig() {
+        boolean changed = false;
+        if (getConfig().isConfigurationSection("milky-way")) {
+            getConfig().set("milky-way", 100);
+            changed = true;
+        }
+        for (String key : new String[]{"nebulae", "galaxies", "planets", "moon-glow"}) {
+            if (getConfig().isConfigurationSection(key)) {
+                getConfig().set(key, true);
+                changed = true;
+            }
+        }
+        int stars = getConfig().getInt("stars.count", 5000);
+        if (stars > 0 && stars < 500) {
+            getConfig().set("stars.count", 5000);
+            changed = true;
+        }
+        if (getConfig().contains("aurora.enabled")) {
+            if (!getConfig().getBoolean("aurora.enabled", true))
+                getConfig().set("aurora.mode", "off");
+            getConfig().set("aurora.enabled", null);
+            changed = true;
+        }
+        if (changed) {
+            saveConfig();
+            getLogger().info("Migrated old configuration to StarlitPaper 1.1.0 format.");
+        }
     }
 
     @Override
