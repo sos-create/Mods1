@@ -179,8 +179,10 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
             }
 
             String current = properties.get(selected);
-            List<String> candidates = candidatesFor(selected, current).stream()
-                    .filter(value -> isDefaultPropertyAllowed(block.getType(), selected, value))
+            String propertyToChange = selected;
+            List<String> candidates = candidatesFor(propertyToChange, current).stream()
+                    .filter(value -> isDefaultPropertyAllowed(
+                            block.getType(), propertyToChange, value))
                     .toList();
 
             String nextValue = findNextValidValue(
