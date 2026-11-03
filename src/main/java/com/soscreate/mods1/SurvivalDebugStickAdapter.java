@@ -197,7 +197,8 @@ public final class SurvivalDebugStickAdapter implements ModAdapter, Listener {
             String updatedState = replaceProperty(
                     block.getBlockData().getAsString(), selected, nextValue);
             BlockData newData = Bukkit.createBlockData(updatedState);
-            block.setBlockData(newData, true);
+            // The original mod updates the block state without neighbour physics.
+            block.setBlockData(newData, false);
 
             event.getPlayer().sendMessage(ChatColor.GREEN + selected + ChatColor.GRAY
                     + ": " + ChatColor.WHITE + current + ChatColor.GRAY
