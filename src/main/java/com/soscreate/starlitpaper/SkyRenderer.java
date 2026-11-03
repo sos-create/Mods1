@@ -47,7 +47,7 @@ final class SkyRenderer {
         state.meteorStart = ticks + 1;
         state.meteorX = state.random.nextDouble() * 10.0 - 5.0;
         state.meteorFireball = plugin.getConfig().getBoolean("meteors.fireballs", true);
-        state.meteorDuration = 18;
+        state.meteorDuration = 50;
         player.sendMessage(wish
                 ? org.bukkit.ChatColor.LIGHT_PURPLE + "Ты загадал желание под падающей звездой."
                 : org.bukkit.ChatColor.GOLD + "Над тобой пролетает метеор!");
@@ -331,7 +331,7 @@ final class SkyRenderer {
             state.meteorX = state.random.nextDouble() * 12 - 6;
             state.meteorFireball = plugin.getConfig().getBoolean("meteors.fireballs", true)
                     && state.random.nextInt(100) < 22;
-            state.meteorDuration = 16;
+            state.meteorDuration = 50;
             int showerRate = SkyMath.clamp(plugin.getConfig().getInt("meteors.meteor-showers", 15), 0, 100);
             state.showerRemaining = state.random.nextInt(100) < showerRate ? 2 : 0;
             state.nextMeteor = ticks + 360 + (100 - rate) * 9L + state.random.nextInt(500);
@@ -358,7 +358,7 @@ final class SkyRenderer {
                     state.showerRemaining--;
                     state.meteorStart = ticks + 5;
                     state.meteorX = state.random.nextDouble() * 12 - 6;
-                    state.meteorDuration = 16;
+                    state.meteorDuration = 50;
                 }
             } else {
                 double progress = age / (double) state.meteorDuration;
