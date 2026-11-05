@@ -409,7 +409,19 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
             if (bit != null) {
                 int idx = index(x, y, z);
                 if (data.cells[idx] != 0) {
-                    player.sendActionBar(Component.text("That voxel is occupied."));
+                    int best = -1;
+                    int bestDistance = Integer.MAX_VALUE;
+                    for (int zz = 0; zz < SIZE; zz++) for (int yy = 0; yy < SIZE; yy++)
+                        for (int xx = 0; xx < SIZE; xx++) {
+                            int candidate = index(xx, yy, zz);
+                            if (data.cells[candidate] != 0) continue;
+                            int distance = Math.abs(xx - x) + Math.abs(yy - y) + Math.abs(zz - z);
+                            if (distance < bestDistance) { bestDistance = distance; best = candidate; }
+                        }
+                    idx = best;
+                }
+                if (idx < 0) {
+                    player.sendActionBar(Component.text("This chiseled block is full."));
                     return;
                 }
                 data.cells[idx] = (byte) data.materialIndex(bit);
