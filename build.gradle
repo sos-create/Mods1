@@ -37,14 +37,12 @@ sourceSets {
             include 'com/soscreate/starlitpaper/SkyNoise.java'
             include 'com/soscreate/starlitpaper/StarCatalog.java'
         }
-        resources.srcDir 'src/adapter/resources'
         compileClasspath += sourceSets.adapterApi.output + configurations.compileClasspath
         runtimeClasspath += output + compileClasspath
     }
     chiselsAdapter {
         java.srcDir 'src/adapter/java'
         java.include 'com/soscreate/chiselsbits/ChiselsBitsUniversalAdapter.java'
-        resources.srcDir 'src/chiselsAdapter/resources'
         compileClasspath += sourceSets.adapterApi.output + configurations.compileClasspath
         runtimeClasspath += output + compileClasspath
     }
