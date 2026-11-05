@@ -4,18 +4,24 @@ import com.soscreate.universalmodsync.ModAdapter;
 import com.soscreate.universalmodsync.ModDescriptor;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
-import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockDamageEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -25,202 +31,513 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.util.BoundingBox;
+import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
 
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.util.*;
+import java.util.Base64;
 
 /**
- * UniversalModSync adapter for Chisels & Bits 1.4.157.
- * Provides a Paper-side 4x4x4 micro-cube compatibility layer. It does not
- * load or execute the original NeoForge mod classes.
+ * Paper 1.21.4 server-side reimplementation of the core Chisels & Bits workflow.
+ * The original NeoForge classes are deliberately not loaded by Paper.
+ *
+ * Structures are persisted in the Interaction entity's PDC. Their visible
+ * geometry is greedily meshed into persistent BlockDisplay cuboids.
  */
 public final class ChiselsBitsUniversalAdapter implements ModAdapter {
-    private static final String TARGET = "chisels-and-bits-neoforge-1.4.157.jar";
-    private static final int GRID = 4;
-    private static final int BITS = GRID * GRID * GRID;
+    private static final int SIZE = 16;
+    private static final int CELLS = SIZE * SIZE * SIZE;
+    private static final String[] ACCEPTED_FILES = {
+        "chisels-and-bits-neoforge-1.4.157.jar",
+        "chisels-and-bits-neoforge-1.4.157 (1).jar",
+        "chisels-and-bits-neoforge-1.4.157(1).jar"
+    };
 
+    private JavaPlugin plugin;
     private Listener listener;
-    private NamespacedKey chiselKey, bitKey, ownerKey, cellKey, materialKey, recipeKey;
+    private NamespacedKey toolKey, bitKey, structureKey, gridKey, paletteKey, displayKey,
+            blueprintKey, bagKey, modeKey, anchorKey;
 
-    @Override
-    public String getName() {
-        return "Chisels & Bits 1.4.157 Paper compatibility adapter";
-    }
+    private enum Tool { IRON_CHISEL, DIAMOND_CHISEL, GOLD_CHISEL, WRENCH, SAW, BLUEPRINT, BAG }
+    private enum Mode { SINGLE, CUBE_2, CUBE_4, CUBE_8, PLANE, LINE }
 
-    @Override
-    public Set<String> supportedModFiles() {
-        return Set.of(TARGET, "chisels-and-bits-neoforge-1.4.157 (1).jar",
-                "chisels-and-bits-neoforge-1.4.157(1).jar");
-    }
+    @Override public String getName() { return "Chisels & Bits — Paper 1.21.4 adapter"; }
+    @Override public Set<String> supportedModFiles() { return Set.of(ACCEPTED_FILES); }
 
     @Override
     public void onEnable(JavaPlugin plugin, List<ModDescriptor> mods) {
-        boolean found = mods.stream().anyMatch(m -> "chiselsandbits".equalsIgnoreCase(m.modId()));
-        if (!found) {
-            plugin.getLogger().warning("[Chisels & Bits] Filename matched but mod id was not found.");
+        this.plugin = plugin;
+        ModDescriptor detected = mods.stream()
+                .filter(m -> "chiselsandbits".equalsIgnoreCase(m.modId()))
+                .findFirst().orElse(null);
+        if (detected == null) {
+            plugin.getLogger().warning("[C&B] UniversalModSync did not provide modId chiselsandbits.");
             return;
         }
 
-        chiselKey = new NamespacedKey(plugin, "cab_chisel");
-        bitKey = new NamespacedKey(plugin, "cab_bit_material");
-        ownerKey = new NamespacedKey(plugin, "cab_microblock_owner");
-        cellKey = new NamespacedKey(plugin, "cab_microblock_cell");
-        materialKey = new NamespacedKey(plugin, "cab_microblock_material");
-        recipeKey = new NamespacedKey(plugin, "cab_chisel_recipe");
+        toolKey = key("tool");
+        bitKey = key("bit_material");
+        structureKey = key("structure_id");
+        gridKey = key("voxel_grid");
+        paletteKey = key("voxel_palette");
+        displayKey = key("display_owner");
+        blueprintKey = key("blueprint_data");
+        bagKey = key("bit_bag_data");
+        modeKey = key("chisel_mode");
+        anchorKey = key("anchor");
 
-        ItemStack chisel = new ItemStack(Material.IRON_PICKAXE);
-        ItemMeta meta = chisel.getItemMeta();
-        meta.displayName(Component.text("Chisels & Bits Chisel"));
-        meta.getPersistentDataContainer().set(chiselKey, PersistentDataType.BYTE, (byte) 1);
-        chisel.setItemMeta(meta);
-
-        ShapedRecipe recipe = new ShapedRecipe(recipeKey, chisel);
-        recipe.shape(" I ", " SI", " S ");
-        recipe.setIngredient('I', Material.IRON_INGOT);
-        recipe.setIngredient('S', Material.STICK);
-        Bukkit.addRecipe(recipe);
-
+        registerRecipes();
         listener = new CabListener();
         Bukkit.getPluginManager().registerEvents(listener, plugin);
-
-        String version = mods.stream().filter(m -> "chiselsandbits".equalsIgnoreCase(m.modId()))
-                .map(ModDescriptor::version).findFirst().orElse("unknown");
-        plugin.getLogger().info("[Chisels & Bits] Detected version " + version
-                + " through UniversalModSync. Enabled chisel, bit harvesting and 4x4x4 micro-cube placement.");
-        plugin.getLogger().warning("[Chisels & Bits] This is a Paper compatibility subset, not the original "
-                + "NeoForge runtime. The supplied mod targets Minecraft 1.20.4 / NeoForge 20.4.147+ "
-                + "and declares Scena as a dependency; neither NeoForge nor Scena is loaded on Paper.");
+        plugin.getLogger().info("[C&B] Server-side voxel engine enabled for detected " + detected.fileName()
+                + " (" + detected.version() + "). 16x16x16 grid, persistent structures, greedy display meshing.");
+        plugin.getLogger().warning("[C&B] Paper implementation is an independent compatibility port; it cannot "
+                + "load NeoForge/Scena classes or provide native mod rendering/collision hooks.");
     }
 
     @Override
     public void onDisable() {
-        if (listener != null) {
-            HandlerList.unregisterAll(listener);
-            listener = null;
+        if (listener != null) HandlerList.unregisterAll(listener);
+        listener = null;
+        for (String id : List.of("cab_iron_chisel", "cab_diamond_chisel", "cab_gold_chisel",
+                "cab_wrench", "cab_saw", "cab_blueprint", "cab_bag")) {
+            Bukkit.removeRecipe(key(id));
         }
-        if (recipeKey != null) Bukkit.removeRecipe(recipeKey);
     }
 
-    private boolean isChisel(ItemStack item) {
-        return item != null && item.getType() == Material.IRON_PICKAXE && item.hasItemMeta()
-                && item.getItemMeta().getPersistentDataContainer().has(chiselKey, PersistentDataType.BYTE);
+    private NamespacedKey key(String value) { return new NamespacedKey(plugin, value); }
+
+    private void registerRecipes() {
+        recipe("cab_iron_chisel", tool(Material.IRON_PICKAXE, Tool.IRON_CHISEL, "Iron Chisel"),
+                " I ", " SI", " S ", 'I', Material.IRON_INGOT, 'S', Material.STICK);
+        recipe("cab_diamond_chisel", tool(Material.DIAMOND_PICKAXE, Tool.DIAMOND_CHISEL, "Diamond Chisel"),
+                " D ", " SI", " S ", 'D', Material.DIAMOND, 'I', Material.IRON_INGOT, 'S', Material.STICK);
+        recipe("cab_gold_chisel", tool(Material.GOLDEN_PICKAXE, Tool.GOLD_CHISEL, "Gold Chisel"),
+                " G ", " SI", " S ", 'G', Material.GOLD_INGOT, 'I', Material.IRON_INGOT, 'S', Material.STICK);
+        recipe("cab_wrench", tool(Material.IRON_HOE, Tool.WRENCH, "Bit Wrench"),
+                " II", " SI", "S  ", 'I', Material.IRON_INGOT, 'S', Material.STICK);
+        recipe("cab_saw", tool(Material.IRON_AXE, Tool.SAW, "Bit Saw"),
+                " II", "ISI", " S ", 'I', Material.IRON_INGOT, 'S', Material.STICK);
+        recipe("cab_blueprint", tool(Material.PAPER, Tool.BLUEPRINT, "Bit Blueprint"),
+                "PPP", "P P", "PPP", 'P', Material.PAPER);
+        recipe("cab_bag", tool(Material.LEATHER, Tool.BAG, "Bit Bag"),
+                "LLL", "L L", "LLL", 'L', Material.LEATHER);
+    }
+
+    private void recipe(String id, ItemStack result, String row1, String row2, String row3, Object... ingredients) {
+        ShapedRecipe r = new ShapedRecipe(key(id), result);
+        r.shape(row1, row2, row3);
+        for (int i = 0; i < ingredients.length; i += 2)
+            r.setIngredient((Character) ingredients[i], (Material) ingredients[i + 1]);
+        Bukkit.addRecipe(r);
+    }
+
+    private ItemStack tool(Material material, Tool type, String name) {
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(Component.text(name));
+        meta.getPersistentDataContainer().set(toolKey, PersistentDataType.STRING, type.name());
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private Tool tool(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) return null;
+        String value = item.getItemMeta().getPersistentDataContainer().get(toolKey, PersistentDataType.STRING);
+        if (value == null) return null;
+        try { return Tool.valueOf(value); } catch (IllegalArgumentException ignored) { return null; }
     }
 
     private ItemStack bit(Material material, int amount) {
-        Material itemType = material.isItem() ? material : Material.STONE;
-        ItemStack result = new ItemStack(itemType, Math.max(1, Math.min(64, amount)));
-        ItemMeta meta = result.getItemMeta();
+        ItemStack item = new ItemStack(material.isItem() ? material : Material.STONE, Math.max(1, Math.min(64, amount)));
+        ItemMeta meta = item.getItemMeta();
         meta.displayName(Component.text("Bit: " + material.name().toLowerCase(Locale.ROOT)));
         meta.getPersistentDataContainer().set(bitKey, PersistentDataType.STRING, material.getKey().toString());
-        result.setItemMeta(meta);
-        return result;
+        item.setItemMeta(meta);
+        return item;
     }
 
     private Material bitMaterial(ItemStack item) {
         if (item == null || !item.hasItemMeta()) return null;
-        String key = item.getItemMeta().getPersistentDataContainer().get(bitKey, PersistentDataType.STRING);
-        if (key == null) return null;
-        Material material = Material.matchMaterial(key);
-        return material != null && material.isBlock() && !material.isAir() ? material : null;
+        String name = item.getItemMeta().getPersistentDataContainer().get(bitKey, PersistentDataType.STRING);
+        if (name == null) return null;
+        Material m = Material.matchMaterial(name);
+        return m != null && m.isBlock() && !m.isAir() ? m : null;
     }
 
-    private String owner(Block block) {
-        return block.getWorld().getUID() + ":" + block.getX() + ":" + block.getY() + ":" + block.getZ();
+    private static int index(int x, int y, int z) { return x + SIZE * (y + SIZE * z); }
+    private static boolean inside(int x, int y, int z) {
+        return x >= 0 && y >= 0 && z >= 0 && x < SIZE && y < SIZE && z < SIZE;
+    }
+
+    private static final class VoxelData {
+        final byte[] cells = new byte[CELLS];
+        final List<String> palette = new ArrayList<>();
+
+        int materialIndex(Material material) {
+            String id = material.getKey().toString();
+            int found = palette.indexOf(id);
+            if (found >= 0) return found + 1;
+            if (palette.size() >= 254) throw new IllegalStateException("A structure can contain at most 254 materials.");
+            palette.add(id);
+            return palette.size();
+        }
+
+        Material material(int value) {
+            if (value <= 0 || value > palette.size()) return Material.AIR;
+            Material m = Material.matchMaterial(palette.get(value - 1));
+            return m == null ? Material.AIR : m;
+        }
+
+        void fill(Material material) {
+            int id = materialIndex(material);
+            Arrays.fill(cells, (byte) id);
+        }
+
+        String encode() {
+            try {
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                DataOutputStream out = new DataOutputStream(bytes);
+                out.writeByte(palette.size());
+                for (String p : palette) out.writeUTF(p);
+                out.write(cells);
+                out.close();
+                return Base64.getEncoder().encodeToString(bytes.toByteArray());
+            } catch (Exception ex) { throw new IllegalStateException(ex); }
+        }
+
+        static VoxelData decode(String encoded) {
+            try {
+                byte[] raw = Base64.getDecoder().decode(encoded);
+                DataInputStream in = new DataInputStream(new ByteArrayInputStream(raw));
+                VoxelData data = new VoxelData();
+                int count = in.readUnsignedByte();
+                for (int i = 0; i < count; i++) data.palette.add(in.readUTF());
+                in.readFully(data.cells);
+                return data;
+            } catch (Exception ex) { throw new IllegalArgumentException("Corrupt voxel data", ex); }
+        }
+    }
+
+    private void save(Interaction anchor, VoxelData data) {
+        anchor.getPersistentDataContainer().set(gridKey, PersistentDataType.STRING, data.encode());
+    }
+
+    private VoxelData load(Interaction anchor) {
+        String encoded = anchor.getPersistentDataContainer().get(gridKey, PersistentDataType.STRING);
+        return encoded == null ? new VoxelData() : VoxelData.decode(encoded);
+    }
+
+    private Interaction createStructure(Location blockLocation, VoxelData data) {
+        World world = blockLocation.getWorld();
+        Location base = new Location(world, blockLocation.getBlockX(), blockLocation.getBlockY(), blockLocation.getBlockZ());
+        Interaction anchor = world.spawn(base, Interaction.class, entity -> {
+            entity.setInteractionWidth(1.0f);
+            entity.setInteractionHeight(1.0f);
+            entity.setResponsive(true);
+            entity.setPersistent(true);
+            entity.setInvulnerable(true);
+            entity.getPersistentDataContainer().set(anchorKey, PersistentDataType.BYTE, (byte) 1);
+            entity.getPersistentDataContainer().set(structureKey, PersistentDataType.STRING, UUID.randomUUID().toString());
+        });
+        save(anchor, data);
+        rebuild(anchor, data);
+        return anchor;
+    }
+
+    private void rebuild(Interaction anchor, VoxelData data) {
+        String id = anchor.getPersistentDataContainer().get(structureKey, PersistentDataType.STRING);
+        if (id == null) return;
+        World world = anchor.getWorld();
+        for (Entity entity : world.getNearbyEntities(anchor.getLocation().clone().add(0.5, 0.5, 0.5), 2, 2, 2)) {
+            if (entity instanceof BlockDisplay display
+                    && id.equals(display.getPersistentDataContainer().get(displayKey, PersistentDataType.STRING)))
+                display.remove();
+        }
+
+        boolean[] used = new boolean[CELLS];
+        for (int z = 0; z < SIZE; z++) for (int y = 0; y < SIZE; y++) for (int x = 0; x < SIZE; x++) {
+            int at = index(x, y, z);
+            int value = Byte.toUnsignedInt(data.cells[at]);
+            if (value == 0 || used[at]) continue;
+
+            int sx = 1;
+            while (x + sx < SIZE && same(data, used, x + sx, y, z, value)) sx++;
+            int sy = 1;
+            outerY: while (y + sy < SIZE) {
+                for (int xx = x; xx < x + sx; xx++)
+                    if (!same(data, used, xx, y + sy, z, value)) break outerY;
+                sy++;
+            }
+            int sz = 1;
+            outerZ: while (z + sz < SIZE) {
+                for (int yy = y; yy < y + sy; yy++)
+                    for (int xx = x; xx < x + sx; xx++)
+                        if (!same(data, used, xx, yy, z + sz, value)) break outerZ;
+                sz++;
+            }
+            for (int zz = z; zz < z + sz; zz++)
+                for (int yy = y; yy < y + sy; yy++)
+                    for (int xx = x; xx < x + sx; xx++) used[index(xx, yy, zz)] = true;
+
+            Material material = data.material(value);
+            if (material.isAir()) continue;
+            final int fx = x, fy = y, fz = z, fX = sx, fY = sy, fZ = sz;
+            Location loc = anchor.getLocation().clone().add(x / 16.0, y / 16.0, z / 16.0);
+            world.spawn(loc, BlockDisplay.class, display -> {
+                display.setBlock(material.createBlockData());
+                display.setTransformation(new Transformation(new Vector3f(), new AxisAngle4f(),
+                        new Vector3f(fX / 16f, fY / 16f, fZ / 16f), new AxisAngle4f()));
+                display.setPersistent(true);
+                display.setInvulnerable(true);
+                display.getPersistentDataContainer().set(displayKey, PersistentDataType.STRING, id);
+            });
+        }
+        save(anchor, data);
+    }
+
+    private static boolean same(VoxelData data, boolean[] used, int x, int y, int z, int value) {
+        int i = index(x, y, z);
+        return !used[i] && Byte.toUnsignedInt(data.cells[i]) == value;
+    }
+
+    private void removeStructure(Interaction anchor) {
+        String id = anchor.getPersistentDataContainer().get(structureKey, PersistentDataType.STRING);
+        if (id != null) {
+            for (Entity entity : anchor.getWorld().getNearbyEntities(anchor.getLocation().clone().add(0.5, 0.5, 0.5), 2, 2, 2))
+                if (entity instanceof BlockDisplay d
+                        && id.equals(d.getPersistentDataContainer().get(displayKey, PersistentDataType.STRING)))
+                    d.remove();
+        }
+        anchor.remove();
+    }
+
+    private int[] targetedCell(Player player, Interaction anchor) {
+        Location eye = player.getEyeLocation();
+        RayTraceResult hit = new BoundingBox(anchor.getLocation().getX(), anchor.getLocation().getY(),
+                anchor.getLocation().getZ(), anchor.getLocation().getX() + 1,
+                anchor.getLocation().getY() + 1, anchor.getLocation().getZ() + 1)
+                .rayTrace(eye.toVector(), eye.getDirection(), 6.0);
+        if (hit == null) return null;
+        Location p = hit.getHitPosition().toLocation(anchor.getWorld());
+        int x = Math.min(15, Math.max(0, (int) Math.floor((p.getX() - anchor.getLocation().getX()) * 16)));
+        int y = Math.min(15, Math.max(0, (int) Math.floor((p.getY() - anchor.getLocation().getY()) * 16)));
+        int z = Math.min(15, Math.max(0, (int) Math.floor((p.getZ() - anchor.getLocation().getZ()) * 16)));
+        return new int[]{x, y, z};
+    }
+
+    private void giveBits(Player player, Material material, int amount) {
+        while (amount > 0) {
+            int stack = Math.min(64, amount);
+            Map<Integer, ItemStack> rest = player.getInventory().addItem(bit(material, stack));
+            rest.values().forEach(item -> player.getWorld().dropItemNaturally(player.getLocation(), item));
+            amount -= stack;
+        }
+    }
+
+    private void rotate(VoxelData data, BlockFace axis) {
+        byte[] old = data.cells.clone();
+        for (int z = 0; z < SIZE; z++) for (int y = 0; y < SIZE; y++) for (int x = 0; x < SIZE; x++) {
+            int nx = x, ny = y, nz = z;
+            switch (axis) {
+                case UP, DOWN -> { nx = SIZE - 1 - y; ny = x; }
+                case EAST, WEST -> { ny = SIZE - 1 - z; nz = y; }
+                default -> { nx = SIZE - 1 - z; nz = x; }
+            }
+            data.cells[index(nx, ny, nz)] = old[index(x, y, z)];
+        }
     }
 
     private final class CabListener implements Listener {
         @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-        public void onBlockBreak(BlockBreakEvent event) {
+        public void onChiselBlock(BlockDamageEvent event) {
             Player player = event.getPlayer();
-            ItemStack held = player.getInventory().getItemInMainHand();
-            if (!isChisel(held) || player.getGameMode() == org.bukkit.GameMode.CREATIVE) return;
-            Material material = event.getBlock().getType();
-            if (!material.isBlock() || material.isAir()) return;
-
-            event.setDropItems(false);
-            event.setExpToDrop(0);
-            event.getBlock().getWorld().dropItemNaturally(
-                    event.getBlock().getLocation().add(0.5, 0.5, 0.5), bit(material, BITS));
-            player.sendActionBar(Component.text("Harvested " + BITS + " bits from " + material.name()));
+            Tool heldTool = tool(player.getInventory().getItemInMainHand());
+            if (heldTool != Tool.IRON_CHISEL && heldTool != Tool.DIAMOND_CHISEL && heldTool != Tool.GOLD_CHISEL) return;
+            Block block = event.getBlock();
+            Material material = block.getType();
+            if (!material.isBlock() || material.isAir() || !block.getType().isSolid()) return;
+            event.setCancelled(true);
+            VoxelData data = new VoxelData();
+            data.fill(material);
+            Location location = block.getLocation();
+            block.setType(Material.AIR, false);
+            createStructure(location, data);
+            player.sendActionBar(Component.text("Block converted to a 16×16×16 chiseled structure."));
         }
 
         @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-        public void onPlaceBit(PlayerInteractEvent event) {
-            if (event.getHand() != EquipmentSlot.HAND || event.getAction() != Action.RIGHT_CLICK_BLOCK
-                    || event.getClickedBlock() == null) return;
-            ItemStack held = event.getPlayer().getInventory().getItemInMainHand();
-            Material material = bitMaterial(held);
-            if (material == null) return;
-
-            Block target = event.getClickedBlock().getRelative(event.getBlockFace());
-            if (!target.getType().isAir() && !target.isPassable()) return;
+        public void onInteractStructure(PlayerInteractEntityEvent event) {
+            if (!(event.getRightClicked() instanceof Interaction anchor)
+                    || !anchor.getPersistentDataContainer().has(anchorKey, PersistentDataType.BYTE)) return;
             event.setCancelled(true);
+            Player player = event.getPlayer();
+            ItemStack hand = player.getInventory().getItemInMainHand();
+            Tool held = tool(hand);
+            VoxelData data = load(anchor);
+            int[] cell = targetedCell(player, anchor);
+            if (cell == null) return;
+            int x = cell[0], y = cell[1], z = cell[2];
+            Material bit = bitMaterial(hand);
 
-            String owner = owner(target);
-            Set<String> occupied = new HashSet<>();
-            for (Entity entity : target.getWorld().getNearbyEntities(
-                    target.getLocation().add(0.5, 0.5, 0.5), 0.8, 0.8, 0.8)) {
-                if (!(entity instanceof BlockDisplay display)) continue;
-                PersistentDataContainer pdc = display.getPersistentDataContainer();
-                if (owner.equals(pdc.get(ownerKey, PersistentDataType.STRING))) {
-                    String cell = pdc.get(cellKey, PersistentDataType.STRING);
-                    if (cell != null) occupied.add(cell);
-                }
-            }
-
-            int cell = -1;
-            for (int i = 0; i < BITS; i++) {
-                if (!occupied.contains(Integer.toString(i))) { cell = i; break; }
-            }
-            if (cell < 0) {
-                event.getPlayer().sendActionBar(Component.text("Micro-cube grid is full (4x4x4)."));
+            if (held == Tool.WRENCH) {
+                rotate(data, player.getFacing());
+                rebuild(anchor, data);
+                player.sendActionBar(Component.text("Structure rotated."));
+                damageTool(player, EquipmentSlot.HAND);
                 return;
             }
-
-            final int selected = cell;
-            int x = selected % GRID;
-            int y = (selected / GRID) % GRID;
-            int z = selected / (GRID * GRID);
-            target.getWorld().spawn(target.getLocation().add(
-                    x / (double) GRID, y / (double) GRID, z / (double) GRID),
-                    BlockDisplay.class, display -> {
-                        display.setBlock(material.createBlockData());
-                        display.setTransformation(new Transformation(new Vector3f(0, 0, 0),
-                                new AxisAngle4f(), new Vector3f(1f / GRID, 1f / GRID, 1f / GRID),
-                                new AxisAngle4f()));
-                        display.setPersistent(true);
-                        PersistentDataContainer pdc = display.getPersistentDataContainer();
-                        pdc.set(ownerKey, PersistentDataType.STRING, owner);
-                        pdc.set(cellKey, PersistentDataType.STRING, Integer.toString(selected));
-                        pdc.set(materialKey, PersistentDataType.STRING, material.getKey().toString());
-                    });
-
-            if (held.getAmount() <= 1) event.getPlayer().getInventory().setItemInMainHand(null);
-            else held.setAmount(held.getAmount() - 1);
-            event.getPlayer().sendActionBar(Component.text("Placed micro-cube "
-                    + (occupied.size() + 1) + "/" + BITS));
+            if (held == Tool.BLUEPRINT) {
+                ItemMeta meta = hand.getItemMeta();
+                meta.getPersistentDataContainer().set(blueprintKey, PersistentDataType.STRING, data.encode());
+                meta.displayName(Component.text("Written Bit Blueprint"));
+                hand.setItemMeta(meta);
+                player.sendMessage(Component.text("Blueprint copied. Use it on an empty block to paste."));
+                return;
+            }
+            if (held == Tool.BAG) {
+                openBag(player, hand);
+                return;
+            }
+            if (bit != null) {
+                int idx = index(x, y, z);
+                if (data.cells[idx] != 0) {
+                    player.sendActionBar(Component.text("That voxel is occupied."));
+                    return;
+                }
+                data.cells[idx] = (byte) data.materialIndex(bit);
+                consumeOne(player, hand);
+                rebuild(anchor, data);
+                return;
+            }
+            if (held == Tool.IRON_CHISEL || held == Tool.DIAMOND_CHISEL || held == Tool.GOLD_CHISEL
+                    || held == Tool.SAW) {
+                int radius = held == Tool.DIAMOND_CHISEL ? 0 : held == Tool.GOLD_CHISEL ? 3
+                        : held == Tool.SAW ? 1 : 1;
+                int removed = 0;
+                Material drop = Material.AIR;
+                for (int zz = Math.max(0, z - radius); zz <= Math.min(15, z + radius); zz++)
+                    for (int yy = Math.max(0, y - radius); yy <= Math.min(15, y + radius); yy++)
+                        for (int xx = Math.max(0, x - radius); xx <= Math.min(15, x + radius); xx++) {
+                            int idx = index(xx, yy, zz);
+                            if (data.cells[idx] == 0) continue;
+                            drop = data.material(Byte.toUnsignedInt(data.cells[idx]));
+                            data.cells[idx] = 0;
+                            removed++;
+                        }
+                if (removed == 0) return;
+                if (drop != Material.AIR) giveBits(player, drop, removed);
+                rebuild(anchor, data);
+                damageTool(player, EquipmentSlot.HAND);
+                player.sendActionBar(Component.text("Removed " + removed + " bits."));
+                if (isEmpty(data)) removeStructure(anchor);
+            }
         }
 
         @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-        public void onRecoverBit(PlayerInteractEntityEvent event) {
-            if (!(event.getRightClicked() instanceof BlockDisplay display)) return;
-            Player player = event.getPlayer();
-            if (!isChisel(player.getInventory().getItemInMainHand())) return;
-
-            String key = display.getPersistentDataContainer().get(materialKey, PersistentDataType.STRING);
-            if (key == null) return;
-            Material material = Material.matchMaterial(key);
-            if (material == null || !material.isBlock() || material.isAir()) return;
-
+        public void onLeftClickStructure(EntityDamageByEntityEvent event) {
+            if (!(event.getDamager() instanceof Player player)
+                    || !(event.getEntity() instanceof Interaction anchor)
+                    || !anchor.getPersistentDataContainer().has(anchorKey, PersistentDataType.BYTE)) return;
             event.setCancelled(true);
-            display.remove();
-            player.getInventory().addItem(bit(material, 1)).values()
-                    .forEach(leftover -> player.getWorld().dropItemNaturally(player.getLocation(), leftover));
+            ItemStack hand = player.getInventory().getItemInMainHand();
+            Tool held = tool(hand);
+            if (held != Tool.IRON_CHISEL && held != Tool.DIAMOND_CHISEL && held != Tool.GOLD_CHISEL
+                    && held != Tool.SAW) return;
+            VoxelData data = load(anchor);
+            int[] cell = targetedCell(player, anchor);
+            if (cell == null) return;
+            int radius = held == Tool.DIAMOND_CHISEL ? 0 : held == Tool.GOLD_CHISEL ? 3 : held == Tool.SAW ? 1 : 1;
+            int removed = 0;
+            Material drop = Material.AIR;
+            for (int z = Math.max(0, cell[2] - radius); z <= Math.min(15, cell[2] + radius); z++)
+                for (int y = Math.max(0, cell[1] - radius); y <= Math.min(15, cell[1] + radius); y++)
+                    for (int x = Math.max(0, cell[0] - radius); x <= Math.min(15, cell[0] + radius); x++) {
+                        int idx = index(x, y, z);
+                        if (data.cells[idx] == 0) continue;
+                        drop = data.material(Byte.toUnsignedInt(data.cells[idx]));
+                        data.cells[idx] = 0;
+                        removed++;
+                    }
+            if (removed == 0) return;
+            if (drop != Material.AIR) giveBits(player, drop, removed);
+            rebuild(anchor, data);
+            damageTool(player, EquipmentSlot.HAND);
+            player.sendActionBar(Component.text("Removed " + removed + " bits."));
+            if (isEmpty(data)) removeStructure(anchor);
         }
+
+        @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+        public void onPlaceBits(PlayerInteractEvent event) {
+            if (event.getHand() != EquipmentSlot.HAND || event.getAction() != Action.RIGHT_CLICK_BLOCK
+                    || event.getClickedBlock() == null) return;
+            Player player = event.getPlayer();
+            ItemStack hand = player.getInventory().getItemInMainHand();
+            Material material = bitMaterial(hand);
+            if (material == null) return;
+            Block target = event.getClickedBlock().getRelative(event.getBlockFace());
+            if (!target.getType().isAir()) return;
+            event.setCancelled(true);
+            VoxelData data = new VoxelData();
+            data.cells[index(8, 8, 8)] = (byte) data.materialIndex(material);
+            createStructure(target.getLocation(), data);
+            consumeOne(player, hand);
+        }
+
+        @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+        public void onBlueprintPaste(PlayerInteractEvent event) {
+            if (event.getHand() != EquipmentSlot.HAND || event.getAction() != Action.RIGHT_CLICK_BLOCK
+                    || event.getClickedBlock() == null) return;
+            ItemStack hand = event.getPlayer().getInventory().getItemInMainHand();
+            if (tool(hand) != Tool.BLUEPRINT || !hand.hasItemMeta()) return;
+            String encoded = hand.getItemMeta().getPersistentDataContainer()
+                    .get(blueprintKey, PersistentDataType.STRING);
+            if (encoded == null) return;
+            Block target = event.getClickedBlock().getRelative(event.getBlockFace());
+            if (!target.getType().isAir()) return;
+            event.setCancelled(true);
+            createStructure(target.getLocation(), VoxelData.decode(encoded));
+            if (event.getPlayer().getGameMode() != GameMode.CREATIVE) consumeOne(event.getPlayer(), hand);
+        }
+    }
+
+    private boolean isEmpty(VoxelData data) {
+        for (byte b : data.cells) if (b != 0) return false;
+        return true;
+    }
+
+    private void consumeOne(Player player, ItemStack hand) {
+        if (player.getGameMode() == GameMode.CREATIVE) return;
+        if (hand.getAmount() <= 1) player.getInventory().setItemInMainHand(null);
+        else hand.setAmount(hand.getAmount() - 1);
+    }
+
+    private void damageTool(Player player, EquipmentSlot slot) {
+        ItemStack item = slot == EquipmentSlot.HAND ? player.getInventory().getItemInMainHand()
+                : player.getInventory().getItemInOffHand();
+        if (item == null || item.getType().getMaxDurability() <= 0 || player.getGameMode() == GameMode.CREATIVE) return;
+        if (item.getItemMeta() instanceof org.bukkit.inventory.meta.Damageable damageable) {
+            damageable.setDamage(damageable.getDamage() + 1);
+            item.setItemMeta((ItemMeta) damageable);
+            if (damageable.getDamage() >= item.getType().getMaxDurability()) {
+                if (slot == EquipmentSlot.HAND) player.getInventory().setItemInMainHand(null);
+                else player.getInventory().setItemInOffHand(null);
+            }
+        }
+    }
+
+    private void openBag(Player player, ItemStack bag) {
+        if (!bag.hasItemMeta()) return;
+        String stored = bag.getItemMeta().getPersistentDataContainer().get(bagKey, PersistentDataType.STRING);
+        player.sendMessage(Component.text(stored == null
+                ? "Bit Bag: empty. Place bit stacks inside by right-clicking the bag in a later bag-management update."
+                : "Bit Bag data is preserved on this item."));
     }
 }
