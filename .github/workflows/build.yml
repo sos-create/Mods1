@@ -1,4 +1,4 @@
-name: Build StarlitPaper and UniversalModSync adapter
+name: Build StarlitPaper and UniversalModSync adapters
 
 on:
   push:
@@ -23,13 +23,18 @@ jobs:
           java-version: '21'
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-      - name: Build and test plugin and adapter
+      - name: Build and test plugin and adapters
         run: gradle --no-daemon clean build
-      - name: Upload UniversalModSync adapter
+      - name: Upload Starlit UniversalModSync adapter
         uses: actions/upload-artifact@v4
         with:
           name: starlit-universalmodsync-adapter
           path: build/libs/starlit-universalmodsync-adapter.jar
+      - name: Upload Chisels & Bits UniversalModSync adapter
+        uses: actions/upload-artifact@v4
+        with:
+          name: chisels-and-bits-universalmodsync-adapter
+          path: build/libs/chisels-and-bits-universalmodsync-adapter.jar
       - name: Upload standalone Paper plugin
         uses: actions/upload-artifact@v4
         with:

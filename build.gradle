@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'com.soscreate'
-version = '1.3.0'
+version = '1.4.0'
 
 java {
     toolchain {
@@ -24,9 +24,6 @@ dependencies {
 }
 
 sourceSets {
-    // Compile-time copies of the UniversalModSync public API. These classes
-    // are deliberately excluded from the adapter JAR; at runtime the adapter
-    // links to the real API exported by the UniversalModSync plugin.
     adapterApi {
         java.srcDir 'src/adapterApi/java'
         compileClasspath += configurations.compileClasspath
@@ -40,6 +37,14 @@ sourceSets {
             include 'com/soscreate/starlitpaper/SkyNoise.java'
             include 'com/soscreate/starlitpaper/StarCatalog.java'
         }
+        resources.srcDir 'src/adapter/resources'
+        compileClasspath += sourceSets.adapterApi.output + configurations.compileClasspath
+        runtimeClasspath += output + compileClasspath
+    }
+    chiselsAdapter {
+        java.srcDir 'src/adapter/java'
+        java.include 'com/soscreate/chiselsbits/ChiselsBitsUniversalAdapter.java'
+        resources.srcDir 'src/chiselsAdapter/resources'
         compileClasspath += sourceSets.adapterApi.output + configurations.compileClasspath
         runtimeClasspath += output + compileClasspath
     }
@@ -54,18 +59,29 @@ tasks.named('compileAdapterJava') {
     dependsOn tasks.named('compileAdapterApiJava')
 }
 
+tasks.named('compileChiselsAdapterJava') {
+    dependsOn tasks.named('compileAdapterApiJava')
+}
+
 tasks.register('adapterJar', Jar) {
     dependsOn tasks.named('adapterClasses')
     archiveFileName = 'starlit-universalmodsync-adapter.jar'
     destinationDirectory = layout.buildDirectory.dir('libs')
     from sourceSets.adapter.output
-    // Do not bundle UniversalModSync API classes: they must be shared with
-    // the parent plugin class loader to preserve Java type identity.
+    exclude 'com/soscreate/universalmodsync/**'
+}
+
+tasks.register('chiselsAdapterJar', Jar) {
+    dependsOn tasks.named('chiselsAdapterClasses')
+    archiveFileName = 'chisels-and-bits-universalmodsync-adapter.jar'
+    destinationDirectory = layout.buildDirectory.dir('libs')
+    from sourceSets.chiselsAdapter.output
     exclude 'com/soscreate/universalmodsync/**'
 }
 
 tasks.named('build') {
     dependsOn tasks.named('adapterJar')
+    dependsOn tasks.named('chiselsAdapterJar')
 }
 
 tasks.test {
