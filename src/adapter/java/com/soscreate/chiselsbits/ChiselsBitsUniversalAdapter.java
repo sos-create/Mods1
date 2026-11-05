@@ -384,7 +384,6 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
                 player.sendActionBar(Component.text("You do not own this chiseled structure."));
                 return;
             }
-            if (!canEdit(player, anchor)) return;
             event.setCancelled(true);
             ItemStack hand = player.getInventory().getItemInMainHand();
             Tool held = tool(hand);
@@ -462,6 +461,7 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
             if (!(event.getDamager() instanceof Player player)
                     || !(event.getEntity() instanceof Interaction anchor)
                     || !anchor.getPersistentDataContainer().has(anchorKey, PersistentDataType.BYTE)) return;
+            if (!canEdit(player, anchor)) return;
             event.setCancelled(true);
             ItemStack hand = player.getInventory().getItemInMainHand();
             Tool held = tool(hand);
