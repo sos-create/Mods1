@@ -62,12 +62,10 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
 
     private JavaPlugin plugin;
     private Listener listener;
-    private NamespacedKey toolKey, bitKey, structureKey, gridKey, paletteKey, displayKey,
-            blueprintKey, bagKey, modeKey, anchorKey;
+    private NamespacedKey toolKey, bitKey, structureKey, gridKey, displayKey,
+            blueprintKey, ownerKey, anchorKey;
 
-    private enum Tool { IRON_CHISEL, DIAMOND_CHISEL, GOLD_CHISEL, WRENCH, SAW, BLUEPRINT, BAG }
-    private enum Mode { SINGLE, CUBE_2, CUBE_4, CUBE_8, PLANE, LINE }
-
+    private enum Tool { IRON_CHISEL, DIAMOND_CHISEL, GOLD_CHISEL, WRENCH, SAW, BLUEPRINT }
     @Override public String getName() { return "Chisels & Bits — Paper 1.21.4 adapter"; }
     @Override public Set<String> supportedModFiles() { return Set.of(ACCEPTED_FILES); }
 
@@ -86,12 +84,10 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
         bitKey = key("bit_material");
         structureKey = key("structure_id");
         gridKey = key("voxel_grid");
-        paletteKey = key("voxel_palette");
         displayKey = key("display_owner");
         blueprintKey = key("blueprint_data");
-        bagKey = key("bit_bag_data");
-        modeKey = key("chisel_mode");
         anchorKey = key("anchor");
+        ownerKey = key("owner");
 
         registerRecipes();
         listener = new CabListener();
@@ -107,7 +103,7 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
         if (listener != null) HandlerList.unregisterAll(listener);
         listener = null;
         for (String id : List.of("cab_iron_chisel", "cab_diamond_chisel", "cab_gold_chisel",
-                "cab_wrench", "cab_saw", "cab_blueprint", "cab_bag")) {
+                "cab_wrench", "cab_saw", "cab_blueprint")) {
             Bukkit.removeRecipe(key(id));
         }
     }
@@ -127,8 +123,6 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
                 " II", "ISI", " S ", 'I', Material.IRON_INGOT, 'S', Material.STICK);
         recipe("cab_blueprint", tool(Material.PAPER, Tool.BLUEPRINT, "Bit Blueprint"),
                 "PPP", "P P", "PPP", 'P', Material.PAPER);
-        recipe("cab_bag", tool(Material.LEATHER, Tool.BAG, "Bit Bag"),
-                "LLL", "L L", "LLL", 'L', Material.LEATHER);
     }
 
     private void recipe(String id, ItemStack result, String row1, String row2, String row3, Object... ingredients) {
@@ -215,12 +209,18 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
 
         static VoxelData decode(String encoded) {
             try {
+                if (encoded == null || encoded.length() > 16_384)
+                    throw new IllegalArgumentException("Voxel data exceeds the supported size.");
                 byte[] raw = Base64.getDecoder().decode(encoded);
                 DataInputStream in = new DataInputStream(new ByteArrayInputStream(raw));
                 VoxelData data = new VoxelData();
                 int count = in.readUnsignedByte();
+                if (count == 255) throw new IllegalArgumentException("Invalid material palette.");
                 for (int i = 0; i < count; i++) data.palette.add(in.readUTF());
                 in.readFully(data.cells);
+                if (in.available() != 0) throw new IllegalArgumentException("Unexpected trailing voxel data.");
+                for (byte cell : data.cells)
+                    if (Byte.toUnsignedInt(cell) > count) throw new IllegalArgumentException("Invalid voxel material index.");
                 return data;
             } catch (Exception ex) { throw new IllegalArgumentException("Corrupt voxel data", ex); }
         }
@@ -235,7 +235,7 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
         return encoded == null ? new VoxelData() : VoxelData.decode(encoded);
     }
 
-    private Interaction createStructure(Location blockLocation, VoxelData data) {
+    private Interaction createStructure(Location blockLocation, VoxelData data, UUID owner) {
         World world = blockLocation.getWorld();
         Location base = new Location(world, blockLocation.getBlockX(), blockLocation.getBlockY(), blockLocation.getBlockZ());
         Interaction anchor = world.spawn(base, Interaction.class, entity -> {
@@ -246,6 +246,7 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
             entity.setInvulnerable(true);
             entity.getPersistentDataContainer().set(anchorKey, PersistentDataType.BYTE, (byte) 1);
             entity.getPersistentDataContainer().set(structureKey, PersistentDataType.STRING, UUID.randomUUID().toString());
+            entity.getPersistentDataContainer().set(ownerKey, PersistentDataType.STRING, owner.toString());
         });
         save(anchor, data);
         rebuild(anchor, data);
@@ -289,7 +290,7 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
 
             Material material = data.material(value);
             if (material.isAir()) continue;
-            final int fx = x, fy = y, fz = z, fX = sx, fY = sy, fZ = sz;
+            final int fX = sx, fY = sy, fZ = sz;
             Location loc = anchor.getLocation().clone().add(x / 16.0, y / 16.0, z / 16.0);
             world.spawn(loc, BlockDisplay.class, display -> {
                 display.setBlock(material.createBlockData());
@@ -342,14 +343,15 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
         }
     }
 
-    private void rotate(VoxelData data, BlockFace axis) {
+    private void rotate(VoxelData data, BlockFace facing) {
         byte[] old = data.cells.clone();
+        boolean reverse = facing == BlockFace.DOWN || facing == BlockFace.WEST || facing == BlockFace.SOUTH;
         for (int z = 0; z < SIZE; z++) for (int y = 0; y < SIZE; y++) for (int x = 0; x < SIZE; x++) {
             int nx = x, ny = y, nz = z;
-            switch (axis) {
-                case UP, DOWN -> { nx = SIZE - 1 - y; ny = x; }
-                case EAST, WEST -> { ny = SIZE - 1 - z; nz = y; }
-                default -> { nx = SIZE - 1 - z; nz = x; }
+            switch (facing) {
+                case UP, DOWN -> { nx = reverse ? y : SIZE - 1 - y; ny = reverse ? SIZE - 1 - x : x; }
+                case EAST, WEST -> { ny = reverse ? z : SIZE - 1 - z; nz = reverse ? SIZE - 1 - y : y; }
+                default -> { nx = reverse ? z : SIZE - 1 - z; nz = reverse ? SIZE - 1 - x : x; }
             }
             data.cells[index(nx, ny, nz)] = old[index(x, y, z)];
         }
@@ -368,8 +370,8 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
             VoxelData data = new VoxelData();
             data.fill(material);
             Location location = block.getLocation();
+            createStructure(location, data, player.getUniqueId());
             block.setType(Material.AIR, false);
-            createStructure(location, data);
             player.sendActionBar(Component.text("Block converted to a 16×16×16 chiseled structure."));
         }
 
@@ -377,8 +379,13 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
         public void onInteractStructure(PlayerInteractEntityEvent event) {
             if (!(event.getRightClicked() instanceof Interaction anchor)
                     || !anchor.getPersistentDataContainer().has(anchorKey, PersistentDataType.BYTE)) return;
-            event.setCancelled(true);
             Player player = event.getPlayer();
+            if (!canEdit(player, anchor)) {
+                player.sendActionBar(Component.text("You do not own this chiseled structure."));
+                return;
+            }
+            if (!canEdit(player, anchor)) return;
+            event.setCancelled(true);
             ItemStack hand = player.getInventory().getItemInMainHand();
             Tool held = tool(hand);
             VoxelData data = load(anchor);
@@ -400,10 +407,6 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
                 meta.displayName(Component.text("Written Bit Blueprint"));
                 hand.setItemMeta(meta);
                 player.sendMessage(Component.text("Blueprint copied. Use it on an empty block to paste."));
-                return;
-            }
-            if (held == Tool.BAG) {
-                openBag(player, hand);
                 return;
             }
             if (bit != null) {
@@ -434,18 +437,19 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
                 int radius = held == Tool.DIAMOND_CHISEL ? 0 : held == Tool.GOLD_CHISEL ? 3
                         : held == Tool.SAW ? 1 : 1;
                 int removed = 0;
-                Material drop = Material.AIR;
+                Map<Material, Integer> drops = new HashMap<>();
                 for (int zz = Math.max(0, z - radius); zz <= Math.min(15, z + radius); zz++)
                     for (int yy = Math.max(0, y - radius); yy <= Math.min(15, y + radius); yy++)
                         for (int xx = Math.max(0, x - radius); xx <= Math.min(15, x + radius); xx++) {
                             int idx = index(xx, yy, zz);
                             if (data.cells[idx] == 0) continue;
-                            drop = data.material(Byte.toUnsignedInt(data.cells[idx]));
+                            Material drop = data.material(Byte.toUnsignedInt(data.cells[idx]));
+                            if (drop != Material.AIR) drops.merge(drop, 1, Integer::sum);
                             data.cells[idx] = 0;
                             removed++;
                         }
                 if (removed == 0) return;
-                if (drop != Material.AIR) giveBits(player, drop, removed);
+                drops.forEach((material, count) -> giveBits(player, material, count));
                 rebuild(anchor, data);
                 damageTool(player, EquipmentSlot.HAND);
                 player.sendActionBar(Component.text("Removed " + removed + " bits."));
@@ -468,18 +472,19 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
             if (cell == null) return;
             int radius = held == Tool.DIAMOND_CHISEL ? 0 : held == Tool.GOLD_CHISEL ? 3 : held == Tool.SAW ? 1 : 1;
             int removed = 0;
-            Material drop = Material.AIR;
+            Map<Material, Integer> drops = new HashMap<>();
             for (int z = Math.max(0, cell[2] - radius); z <= Math.min(15, cell[2] + radius); z++)
                 for (int y = Math.max(0, cell[1] - radius); y <= Math.min(15, cell[1] + radius); y++)
                     for (int x = Math.max(0, cell[0] - radius); x <= Math.min(15, cell[0] + radius); x++) {
                         int idx = index(x, y, z);
                         if (data.cells[idx] == 0) continue;
-                        drop = data.material(Byte.toUnsignedInt(data.cells[idx]));
+                        Material drop = data.material(Byte.toUnsignedInt(data.cells[idx]));
+                        if (drop != Material.AIR) drops.merge(drop, 1, Integer::sum);
                         data.cells[idx] = 0;
                         removed++;
                     }
             if (removed == 0) return;
-            if (drop != Material.AIR) giveBits(player, drop, removed);
+            drops.forEach((material, count) -> giveBits(player, material, count));
             rebuild(anchor, data);
             damageTool(player, EquipmentSlot.HAND);
             player.sendActionBar(Component.text("Removed " + removed + " bits."));
@@ -499,7 +504,7 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
             event.setCancelled(true);
             VoxelData data = new VoxelData();
             data.cells[index(8, 8, 8)] = (byte) data.materialIndex(material);
-            createStructure(target.getLocation(), data);
+            createStructure(target.getLocation(), data, player.getUniqueId());
             consumeOne(player, hand);
         }
 
@@ -514,10 +519,23 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
             if (encoded == null) return;
             Block target = event.getClickedBlock().getRelative(event.getBlockFace());
             if (!target.getType().isAir()) return;
+            VoxelData blueprint;
+            try {
+                blueprint = VoxelData.decode(encoded);
+            } catch (IllegalArgumentException ex) {
+                event.getPlayer().sendMessage(Component.text("This blueprint is damaged and cannot be placed."));
+                return;
+            }
             event.setCancelled(true);
-            createStructure(target.getLocation(), VoxelData.decode(encoded));
+            createStructure(target.getLocation(), blueprint, event.getPlayer().getUniqueId());
             if (event.getPlayer().getGameMode() != GameMode.CREATIVE) consumeOne(event.getPlayer(), hand);
         }
+    }
+
+    private boolean canEdit(Player player, Interaction anchor) {
+        String owner = anchor.getPersistentDataContainer().get(ownerKey, PersistentDataType.STRING);
+        return player.hasPermission("chiselsbits.admin")
+                || (owner != null && owner.equals(player.getUniqueId().toString()));
     }
 
     private boolean isEmpty(VoxelData data) {
@@ -545,11 +563,4 @@ public final class ChiselsBitsUniversalAdapter implements ModAdapter {
         }
     }
 
-    private void openBag(Player player, ItemStack bag) {
-        if (!bag.hasItemMeta()) return;
-        String stored = bag.getItemMeta().getPersistentDataContainer().get(bagKey, PersistentDataType.STRING);
-        player.sendMessage(Component.text(stored == null
-                ? "Bit Bag: empty. Place bit stacks inside by right-clicking the bag in a later bag-management update."
-                : "Bit Bag data is preserved on this item."));
-    }
 }
